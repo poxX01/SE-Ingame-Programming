@@ -1,0 +1,42 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.32126.315
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StationInventoryManager", "Space Engineers In-Game Programming\StationInventoryManager.csproj", "{D0017CF7-7BD7-40BC-AFF9-E376A2C3CF8F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ShipUtilities", "ShipUtilities\ShipUtilities.csproj", "{E511B97A-BB2B-49DC-BFF7-0AC0CE6EC9A8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodeEditor", "CodeEditor\CodeEditor.csproj", "{BC307E7E-D2AC-4632-96D3-A8E8E555FF22}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SolarAnalyzerProbe", "SolarAlignment\SolarAnalyzerProbe.csproj", "{C1B74618-07F5-4F37-832C-DBB6B25CC6A8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AlignToPosition", "AlignToPosition\AlignToPosition.csproj", "{E2E6C92A-5D16-4DD7-A473-44B60F2A290D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SolarAligner", "SolarAligner\SolarAligner.csproj", "{FEAC70BF-9133-42DB-A60C-0E5AEB54F8F9}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{D0017CF7-7BD7-40BC-AFF9-E376A2C3CF8F}.Debug|x64.ActiveCfg = Debug|x64
+		{D0017CF7-7BD7-40BC-AFF9-E376A2C3CF8F}.Debug|x64.Build.0 = Debug|x64
+		{E511B97A-BB2B-49DC-BFF7-0AC0CE6EC9A8}.Debug|x64.ActiveCfg = Debug|x64
+		{E511B97A-BB2B-49DC-BFF7-0AC0CE6EC9A8}.Debug|x64.Build.0 = Debug|x64
+		{BC307E7E-D2AC-4632-96D3-A8E8E555FF22}.Debug|x64.ActiveCfg = Debug|x64
+		{BC307E7E-D2AC-4632-96D3-A8E8E555FF22}.Debug|x64.Build.0 = Debug|x64
+		{C1B74618-07F5-4F37-832C-DBB6B25CC6A8}.Debug|x64.ActiveCfg = Debug|x64
+		{C1B74618-07F5-4F37-832C-DBB6B25CC6A8}.Debug|x64.Build.0 = Debug|x64
+		{E2E6C92A-5D16-4DD7-A473-44B60F2A290D}.Debug|x64.ActiveCfg = Debug|x64
+		{E2E6C92A-5D16-4DD7-A473-44B60F2A290D}.Debug|x64.Build.0 = Debug|x64
+		{FEAC70BF-9133-42DB-A60C-0E5AEB54F8F9}.Debug|x64.ActiveCfg = Debug|x64
+		{FEAC70BF-9133-42DB-A60C-0E5AEB54F8F9}.Debug|x64.Build.0 = Debug|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {6BBD245F-EA6B-448C-B5FF-3BCA1B2D4D22}
+	EndGlobalSection
+EndGlobal
