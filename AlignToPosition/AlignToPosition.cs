@@ -115,7 +115,7 @@ namespace IngameScript {
                         break;
                 }
             }
-            public static bool AlignToTarget(Vector3D target, MatrixD anchorToAlignWorldMatrix, PrincipalAxis[] rotationAxes,
+            public static bool AlignToTargetNormalizedVector(Vector3D target, MatrixD anchorToAlignWorldMatrix, PrincipalAxis[] rotationAxes,
                 Base6Directions.Direction[] dotProductFactorDirections, List<Gyroscope> gyroList,
                 float alignmentSuccessThreshold = 0.0001f, float speedLimitInRadPS = 0.75f) {
                 //TODO: Make this work when alignment into the opposite direction is true
@@ -193,7 +193,7 @@ namespace IngameScript {
                 doAlign = !doAlign;
                 Runtime.UpdateFrequency = doAlign ? UpdateFrequency.Update1 : UpdateFrequency.None;
             }
-            if(doAlign) lcd.WriteText($"Has aligned: {Gyroscope.AlignToTarget(vecTargetAlignment, rc.WorldMatrix, rotationAxes, dotProductFactorDirections, gyroList)}");
+            if(doAlign) lcd.WriteText($"Has aligned: {Gyroscope.AlignToTargetNormalizedVector(vecTargetAlignment, rc.WorldMatrix, rotationAxes, dotProductFactorDirections, gyroList)}");
             else gyroList.ForEach(gyro => gyro.StopRotation());
         }
         public T GetBlock<T>(string blockName = "", List<IMyTerminalBlock> blocks = null) {
@@ -204,8 +204,6 @@ namespace IngameScript {
             if(myBlock is object) return myBlock;
             else throw new Exception($"An owned block of type {typeof(T).Name} does not exist in the provided block list.");
         }
-
-
         public Vector3D NormalizedTargetVector(Vector3D target, MatrixD anchorWorldMatrix) {
             //target can be either a position or a normalized target vector
             //if target is non-normalized and is the same position as the anchorBlock, returns (0,0,1)

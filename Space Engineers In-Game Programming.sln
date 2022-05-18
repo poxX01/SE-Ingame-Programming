@@ -9,7 +9,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ShipUtilities", "ShipUtilit
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodeEditor", "CodeEditor\CodeEditor.csproj", "{BC307E7E-D2AC-4632-96D3-A8E8E555FF22}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SolarAnalyzerProbe", "SolarAlignment\SolarAnalyzerProbe.csproj", "{C1B74618-07F5-4F37-832C-DBB6B25CC6A8}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SolarAnalyzer", "SolarAlignment\SolarAnalyzer.csproj", "{C1B74618-07F5-4F37-832C-DBB6B25CC6A8}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AlignToPosition", "AlignToPosition\AlignToPosition.csproj", "{E2E6C92A-5D16-4DD7-A473-44B60F2A290D}"
 EndProject
