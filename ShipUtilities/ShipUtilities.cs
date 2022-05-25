@@ -182,7 +182,7 @@ namespace IngameScript {
             else {
                 foreach(IMyShipConnector connector in constructConnectors) {
                     connector.Enabled = true;
-                    connector.
+                    
 
 
                 }
@@ -196,7 +196,7 @@ namespace IngameScript {
                 connector.Connect();
                 if(connector.Status == MyShipConnectorStatus.Connected) {
                     isDocked = true;
-                    constructTerminalBlocks.Sort(
+                    //constructTerminalBlocks.Sort(
                     break;
                 }
             };
