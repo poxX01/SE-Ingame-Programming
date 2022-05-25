@@ -39,7 +39,6 @@ namespace IngameScript {
         const int MEASUREMENTS_TARGET_AMOUNT_SUN_SPEED = 2500;
         const UpdateType AUTOMATIC_UPDATE_TYPE = UpdateType.Update100 | UpdateType.Update10 | UpdateType.Update1 | UpdateType.Once;
         float maxPossibleOutput; //in MW
-        bool determineOrbitPlaneNormalManually = true;
 
         int currentRoutineRepeats;
         int targetRoutineRepeats; //for Pause()
@@ -288,7 +287,8 @@ namespace IngameScript {
             }
         }
         public sealed class SunOrbit {
-            //Contains the minimum 3 data points to describe a sun orbit, sufficient enough to track it with no more input
+            //Contains the minimum 3 data points to describe a sun orbit, sufficient enough to track the sun via a rotor or gyro
+            #region Fields and Properties
             private const double MAXIMUM_ANGULAR_SPEED = 1d / 60 * 2 * Math.PI;
             private const double MINIMUM_ANGULAR_SPEED = 1440d / 60 * 2 * Math.PI;
             private const string INI_SECTION_NAME = "Sun Orbit";
@@ -299,23 +299,18 @@ namespace IngameScript {
             private const string IGC_BROADCAST_OVERRIDE_DATA_TAG = "Sun Orbit Broadcast: Override data";
             private const string IGC_UNICAST_TAG = "Sun Orbit Unicast";
             private readonly IMyIntergridCommunicationSystem IGC;
-            private readonly IMyBroadcastListener broadcastRequestDataListener;
-            private readonly IMyBroadcastListener broadcastOverrideDataListener;
+            private readonly IMyBroadcastListener broadcastREQUESTDataListener;
+            private readonly IMyBroadcastListener broadcastOVERRIDEDataListener;
             private readonly bool isSolarAnalyzer;
-            private void OverrideDataFromMessage(MyIGCMessage message) {
-                MyTuple<Vector3D, int, float> data = (MyTuple<Vector3D, int, float>)message.Data;
-                PlaneNormal = data.Item1;
-                Direction = data.Item2;
-                AngularSpeedRadPS = data.Item3;
-            }
 
             private Vector3D _planeNormal = Vector3D.Zero;
             private int _rotationDirection = 0; //1 is clockwise, -1 is counter clockwise, Down aligned with planeNormal (right hand rule, fingers pointing in clockwise direction)
             private float _angularSpeed = 0; //in Radians per second
             public enum DataPoint { PlaneNormal = 1, Direction, AngularSpeed }
+            public enum RotationDirection { Clockwise = 1, CounterClockwise = -1 }
             public Vector3D PlaneNormal {
                 get { return _planeNormal; }
-                set { _planeNormal = value == Vector3D.Zero ? Vector3D.Normalize(value) : _planeNormal; }
+                set { _planeNormal = Vector3D.IsZero(value) ? _planeNormal : Vector3D.Normalize(value); }
             }
             public int Direction {
                 get { return _rotationDirection; }
@@ -325,15 +320,16 @@ namespace IngameScript {
                 get { return _angularSpeed; }
                 set { _angularSpeed = value <= MAXIMUM_ANGULAR_SPEED && value > 0 ? value : _angularSpeed; }
             }
+            #endregion
             public SunOrbit(IMyIntergridCommunicationSystem IGC, bool isSolarAnalyzer, bool fillWithMockData = false) {
                 this.isSolarAnalyzer = isSolarAnalyzer;
                 this.IGC = IGC;
                 IGC.UnicastListener.SetMessageCallback();
-                broadcastRequestDataListener = IGC.RegisterBroadcastListener(IGC_BROADCAST_REQUEST_DATA_TAG);
-                broadcastRequestDataListener.SetMessageCallback(IGC_BROADCAST_REQUEST_DATA_TAG);
+                broadcastREQUESTDataListener = IGC.RegisterBroadcastListener(IGC_BROADCAST_REQUEST_DATA_TAG);
+                broadcastREQUESTDataListener.SetMessageCallback();
                 if(!isSolarAnalyzer) {
-                    broadcastOverrideDataListener = IGC.RegisterBroadcastListener(IGC_BROADCAST_OVERRIDE_DATA_TAG);
-                    broadcastOverrideDataListener.SetMessageCallback(IGC_BROADCAST_OVERRIDE_DATA_TAG);
+                    broadcastOVERRIDEDataListener = IGC.RegisterBroadcastListener(IGC_BROADCAST_OVERRIDE_DATA_TAG);
+                    broadcastOVERRIDEDataListener.SetMessageCallback();
                 }
                 if(fillWithMockData) { PlaneNormal = new Vector3D(0, 1, 0); Direction = 1; AngularSpeedRadPS = 0.001f; }
             }
@@ -367,6 +363,7 @@ namespace IngameScript {
                         break;
                 }
             }
+            #region Save & Load functions
             public void WriteToIni(MyIni ini) {
                 ini.Set(INI_SECTION_NAME, INI_KEY_PLANE_NORMAL, _planeNormal.ToString());
                 ini.Set(INI_SECTION_NAME, INI_KEY_DIRECTION, _rotationDirection);
@@ -379,26 +376,42 @@ namespace IngameScript {
                     _angularSpeed = ini.Get(INI_SECTION_NAME, INI_KEY_ANGULAR_SPEED).ToSingle();
                 }
             }
+            #endregion
+            #region IGC functions
+            //Features: Send and override broadcast that, when received by non-analyzers, replaces all their data
+            //Upon receiving a data request broadcast, send a unicast message back to the requestor. Narrower query to only request from Analyzers possible
+            private void IGC_OverrideDataFromMessage(MyIGCMessage message) {
+                MyTuple<string, int, float> data = (MyTuple<string, int, float>)message.Data;
+                Vector3D outVec;
+                Vector3D.TryParse(data.Item1, out outVec);
+                PlaneNormal = outVec;
+                Direction = data.Item2;
+                AngularSpeedRadPS = data.Item3;
+            }
+            private MyTuple<string, int, float> IGC_GenerateMessage() {
+                return new MyTuple<string, int, float>(PlaneNormal.ToString(), Direction, AngularSpeedRadPS);
+            }
             public void IGC_ProcessMessages() {
                 if(IsMapped(DataPoint.PlaneNormal)) {
-                    while(broadcastRequestDataListener.HasPendingMessage) {
-                        MyIGCMessage requestDataMessage = broadcastRequestDataListener.AcceptMessage();
-                        if (!((bool)requestDataMessage.Data && !isSolarAnalyzer))
-                            IGC.SendUnicastMessage(requestDataMessage.Source, IGC_UNICAST_TAG, new MyTuple<Vector3D, int, float>(PlaneNormal, Direction, AngularSpeedRadPS));
+                    while(broadcastREQUESTDataListener.HasPendingMessage) {
+                        MyIGCMessage requestDataMessage = broadcastREQUESTDataListener.AcceptMessage();
+                        if(!((bool)requestDataMessage.Data && !isSolarAnalyzer))
+                            IGC.SendUnicastMessage(requestDataMessage.Source, IGC_UNICAST_TAG, IGC_GenerateMessage());
                     }
                 }
-                if(!isSolarAnalyzer) { while(broadcastOverrideDataListener.HasPendingMessage) OverrideDataFromMessage(broadcastRequestDataListener.AcceptMessage()); }
+                if(!isSolarAnalyzer) while(broadcastOVERRIDEDataListener.HasPendingMessage) IGC_OverrideDataFromMessage(broadcastOVERRIDEDataListener.AcceptMessage());
                 while(IGC.UnicastListener.HasPendingMessage) {
                     MyIGCMessage unicastMessage = IGC.UnicastListener.AcceptMessage();
-                    if(unicastMessage.Tag == IGC_UNICAST_TAG) OverrideDataFromMessage(unicastMessage);
+                    if(unicastMessage.Tag == IGC_UNICAST_TAG) IGC_OverrideDataFromMessage(unicastMessage);
                 }
             }
-            public void IGC_BroadcastSendOverrideData() {
-                if(IsMapped()) IGC.SendBroadcastMessage(IGC_BROADCAST_OVERRIDE_DATA_TAG, new MyTuple<Vector3D, int, float>(PlaneNormal, Direction, AngularSpeedRadPS));
+            public void IGC_BroadcastOverrideData() {
+                if(IsMapped()) IGC.SendBroadcastMessage(IGC_BROADCAST_OVERRIDE_DATA_TAG, IGC_GenerateMessage());
             }
             public void IGC_BroadcastRequestData(bool requestOnlyFromAnalyzers) {
                 if(!isSolarAnalyzer) IGC.SendBroadcastMessage(IGC_BROADCAST_REQUEST_DATA_TAG, requestOnlyFromAnalyzers);
             }
+            #endregion
             public string PrintableDataPoints() {
                 return $"{INI_KEY_PLANE_NORMAL} = {PlaneNormal}\n" +
                     $"{INI_KEY_DIRECTION} = {Direction}\n" +
@@ -471,6 +484,7 @@ namespace IngameScript {
                     sunOrbit.ClearData(dataPoint);
                 } },
                 {"PrintData", () => Me.CustomData = sunOrbit.PrintableDataPoints() },
+                {"SendOverride", () => sunOrbit.IGC_BroadcastOverrideData() },
                 {"AlignToSun", () => {routineToResumeOn = Routine.None; ChangeCurrentRoutine(Routine.AlignPanelDownToSunPlaneNormal); } },
                 {"Debug", () => {
                     routineToResumeOn = Routine.Debug;
@@ -568,8 +582,7 @@ namespace IngameScript {
         public Routine NextRoutineToMapSunOrbit() {
             Routine returnRoutine;
             if(!sunOrbit.IsMapped(SunOrbit.DataPoint.PlaneNormal)) {
-                if(determineOrbitPlaneNormalManually) returnRoutine = Routine.DetermineSunPlaneNormalManual;
-                else returnRoutine = Routine.DetermineSunPlaneNormal;
+                returnRoutine = Routine.DetermineSunPlaneNormalManual;
             }
             else if(!sunOrbit.IsMapped(SunOrbit.DataPoint.Direction)) {
                 returnRoutine = Routine.AlignPanelDownToSunPlaneNormal;

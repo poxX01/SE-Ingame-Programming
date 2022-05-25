@@ -20,34 +20,17 @@ using VRageMath;
 
 namespace IngameScript {
     partial class Program : MyGridProgram {
-        const string IGC_UNICAST_TAG = "Unicast";
-        const string IGC_BROADCAST_TAG = "Broadcast";
-        readonly IMyBroadcastListener _myBroadcastListener;
-        readonly IMyTextSurface lcd;
+        const bool IS_SOLAR_ANALYZER = true;
+        const bool CREATE_MOCK_DATA = true;
+
+        MyCommandLine _commandLine = new MyCommandLine();
         public Program() {
-            _myBroadcastListener = IGC.RegisterBroadcastListener(IGC_BROADCAST_TAG);
-            _myBroadcastListener.SetMessageCallback();
-            IGC.UnicastListener.SetMessageCallback();
-            lcd = Me.GetSurface(0);
-            lcd.ContentType = ContentType.TEXT_AND_IMAGE;
-            lcd.FontSize = 0.7f;
-            lcd.WriteText("");
+
         }
+        enum Test { Zero, One, Two, Three }
         public void Main(string argument, UpdateType updateSource) {
-            if((updateSource & (UpdateType.Trigger | UpdateType.Terminal)) != 0) {
-                IGC.SendBroadcastMessage(IGC_BROADCAST_TAG, $"{Me.CustomName} sending a message to all homies...");
-            }
-            else if((updateSource & UpdateType.IGC) != 0) {
-                while(_myBroadcastListener.HasPendingMessage) {
-                    MyIGCMessage myIGCMessage = _myBroadcastListener.AcceptMessage();
-                    IGC.SendUnicastMessage(myIGCMessage.Source, IGC_UNICAST_TAG, $"{Me.CustomName} has received your message!");
-                    lcd.WriteText($"Message received from {myIGCMessage.Source}:\n{myIGCMessage.Data}\n", true);
-                }
-                while(IGC.UnicastListener.HasPendingMessage) {
-                    MyIGCMessage myIGCMessage = IGC.UnicastListener.AcceptMessage();
-                    lcd.WriteText($"Message received from {myIGCMessage.Source}:\n{myIGCMessage.Data}\n", true);
-                }
-            }
+            Test myEnum = (Test)5;
+            Echo($"{Enum.IsDefined(typeof(Test), myEnum)}");
         }
         public T GetBlock<T>(string blockName = "", List<IMyTerminalBlock> blocks = null) {
             var blocksLocal = blocks ?? new List<IMyTerminalBlock>(); ;
