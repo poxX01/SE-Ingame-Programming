@@ -54,26 +54,25 @@ namespace IngameScript {
         int[] currentSigns = { 1, 1 };
 
         Vector3D bufferVector = new Vector3D(); //used in AlignForwardToSun() and DetermineSunPlaneNormals
-        List<float> floatList = new List<float>(MEASUREMENTS_TARGET_AMOUNT_SUN_SPEED); //for measurements in ObtainPreliminaryAngularSpeed and DetermineSunOrbitDirection
-        List<float> exposureDeltasList = new List<float>(); //TODO: Remove once Routines.Debug gets removed!
+        readonly List<float> floatList = new List<float>(MEASUREMENTS_TARGET_AMOUNT_SUN_SPEED); //for measurements in ObtainPreliminaryAngularSpeed and DetermineSunOrbitDirection
+        readonly List<float> exposureDeltasList = new List<float>(); //TODO: Remove once Routines.Debug gets removed!
 
         //Storage for MANUAL LCD feedback
-        StringBuilder lcdText = new StringBuilder($"Align towards the sun within 1 and target margin.\n\nTarget: {PRECISION_THRESHOLD}\nCurrent: ");
+        readonly StringBuilder lcdText = new StringBuilder($"Align towards the sun within 1 and target margin.\n\nTarget: {PRECISION_THRESHOLD}\nCurrent: ");
         readonly int lcdTextDefaultLength;
         IMyTextPanel lcd;
 
         IMySolarPanel referenceSolarPanel;
-        List<Gyroscope> registeredGyros = new List<Gyroscope>();
-        RotationHelper rotationHelper = new RotationHelper();
-        SunOrbit sunOrbit;
-
         UpdateType currentUpdateSource;
         Routine currentRoutine;
         Routine routineToResumeOn; //Will resume on this routime after an intermediate routine (e.g. Pause and after AlignmentRoutines)
-        MyIni storageIni = new MyIni();
-        MyCommandLine _commandLine = new MyCommandLine();
-        Dictionary<Routine, Action> dicRoutines;
-        Dictionary<string, Action> dicCommands;
+        readonly SunOrbit sunOrbit;
+        readonly List<Gyroscope> registeredGyros = new List<Gyroscope>();
+        readonly RotationHelper rotationHelper = new RotationHelper();
+        readonly MyIni _ini = new MyIni();
+        readonly MyCommandLine _commandLine = new MyCommandLine();
+        readonly Dictionary<Routine, Action> dicRoutines;
+        readonly Dictionary<string, Action> dicCommands;
         public enum Routine {
             None,
             Pause,
@@ -86,11 +85,11 @@ namespace IngameScript {
             Debug
         }
         public enum PrincipalAxis { Pitch, Yaw, Roll }
-        public class RotationHelper {
+        public sealed class RotationHelper {
             //The following two are mostly only useful for gyroscope rotation, as all 3 axes are available to us.
             //E.g. I want my RC.Forward to align to (0, 1, 0), I require the axes that aren't irrelevant in that rotation (Roll is), and those respective axes' planeNormals for the dot product measure
-            private PrincipalAxis[] _rotationAxes = new PrincipalAxis[2]; //The gyroscope operates via Pitch/Yaw/Roll, so the respective axes are stored for a given rotation task.
-            private Base6Directions.Direction[] _dotProductFactorDirections = new Base6Directions.Direction[2]; //As alignment is done by setting the dot product of 2 axes to 0, the directions for those two axes needs to be stored
+            readonly private PrincipalAxis[] _rotationAxes = new PrincipalAxis[2]; //The gyroscope operates via Pitch/Yaw/Roll, so the respective axes are stored for a given rotation task.
+            readonly private Base6Directions.Direction[] _dotProductFactorDirections = new Base6Directions.Direction[2]; //As alignment is done by setting the dot product of 2 axes to 0, the directions for those two axes needs to be stored
             public PrincipalAxis[] RotationAxes { get { return _rotationAxes; } }
             public Base6Directions.Direction[] DotProductFactorDirections { get { return _dotProductFactorDirections; } }
             public Vector3D RotatedVectorClockwise { get; private set; }
@@ -148,7 +147,7 @@ namespace IngameScript {
         public class Gyroscope {
             //Stores a gyroblock and the axes it would have to rotate under to align to a given target, assuming the block whose vectors to align are not the gyro itsself
             //e.g. align a solar panel, gyro is rotated 90 degrees on all axes relative to said panel --> actual rotation needs to occur on corresponding axes
-            public IMyGyro gyroBlock;
+            readonly public IMyGyro terminalBlock;
             protected MyTuple<PrincipalAxis, int> pitchCorrespondingAxis = new MyTuple<PrincipalAxis, int>();
             protected MyTuple<PrincipalAxis, int> yawCorrespondingAxis = new MyTuple<PrincipalAxis, int>();
             protected MyTuple<PrincipalAxis, int> rollCorrespondingAxis = new MyTuple<PrincipalAxis, int>();
@@ -171,7 +170,7 @@ namespace IngameScript {
                     else if(currentComparisonVector == originYawAxis) yawCorrespondingAxis = DetermineMatchingRotationAxis(direction);
                     else if(currentComparisonVector == originRollAxis) rollCorrespondingAxis = DetermineMatchingRotationAxis(direction);
                 }
-                this.gyroBlock = gyroBlock;
+                this.terminalBlock = gyroBlock;
             }
             private static MyTuple<PrincipalAxis, int> DetermineMatchingRotationAxis(Base6Directions.Direction direction) {
                 int sign = 1;
@@ -183,49 +182,6 @@ namespace IngameScript {
                     case Base6Directions.Direction.Up: return new MyTuple<PrincipalAxis, int>(PrincipalAxis.Yaw, -sign);
                     case Base6Directions.Direction.Backward: return new MyTuple<PrincipalAxis, int>(PrincipalAxis.Roll, -sign);
                     default: throw new Exception("Gyroscope.DetermineMatchingRotationAxis() was called with no valid Base6Directions.Direction.");
-                }
-            }
-            public static void DetermineAlignmentRotationAxesAndDirections(Base6Directions.Direction directionToAlignToFutureGivenTarget,
-                out PrincipalAxis[] rotationAxes, out Base6Directions.Direction[] dotProductFactorDirections) {
-                rotationAxes = new PrincipalAxis[2];
-                dotProductFactorDirections = new Base6Directions.Direction[2];
-                switch(directionToAlignToFutureGivenTarget) {
-                    case Base6Directions.Direction.Forward:
-                        rotationAxes[0] = PrincipalAxis.Pitch;
-                        dotProductFactorDirections[0] = Base6Directions.Direction.Up;
-                        rotationAxes[1] = PrincipalAxis.Yaw;
-                        dotProductFactorDirections[1] = Base6Directions.Direction.Right;
-                        break;
-                    case Base6Directions.Direction.Backward:
-                        rotationAxes[0] = PrincipalAxis.Pitch;
-                        dotProductFactorDirections[0] = Base6Directions.Direction.Down;
-                        rotationAxes[1] = PrincipalAxis.Yaw;
-                        dotProductFactorDirections[1] = Base6Directions.Direction.Left;
-                        break;
-                    case Base6Directions.Direction.Right:
-                        rotationAxes[0] = PrincipalAxis.Yaw;
-                        dotProductFactorDirections[0] = Base6Directions.Direction.Backward;
-                        rotationAxes[1] = PrincipalAxis.Roll;
-                        dotProductFactorDirections[1] = Base6Directions.Direction.Down;
-                        break;
-                    case Base6Directions.Direction.Left:
-                        rotationAxes[0] = PrincipalAxis.Yaw;
-                        dotProductFactorDirections[0] = Base6Directions.Direction.Forward;
-                        rotationAxes[1] = PrincipalAxis.Roll;
-                        dotProductFactorDirections[1] = Base6Directions.Direction.Up;
-                        break;
-                    case Base6Directions.Direction.Up:
-                        rotationAxes[0] = PrincipalAxis.Pitch;
-                        dotProductFactorDirections[0] = Base6Directions.Direction.Backward;
-                        rotationAxes[1] = PrincipalAxis.Roll;
-                        dotProductFactorDirections[1] = Base6Directions.Direction.Right;
-                        break;
-                    case Base6Directions.Direction.Down:
-                        rotationAxes[0] = PrincipalAxis.Pitch;
-                        dotProductFactorDirections[0] = Base6Directions.Direction.Forward;
-                        rotationAxes[1] = PrincipalAxis.Roll;
-                        dotProductFactorDirections[1] = Base6Directions.Direction.Left;
-                        break;
                 }
             }
             public static bool AlignToTargetNormalizedVector(Vector3D target, MatrixD anchorToAlignWorldMatrix, RotationHelper rotationHelper, List<Gyroscope> gyroList,
@@ -246,22 +202,22 @@ namespace IngameScript {
                 return Math.Abs(rotationRemainder0) < alignmentSuccessThreshold && Math.Abs(rotationRemainder1) < alignmentSuccessThreshold;
             }
             protected void Enable(bool powerToFull = false) {
-                float gyroPower = powerToFull || gyroBlock.GyroPower == 0 ? 1 : gyroBlock.GyroPower;
-                gyroBlock.Enabled = true;
-                gyroBlock.GyroOverride = true;
-                gyroBlock.GyroPower = gyroPower;
+                float gyroPower = powerToFull || terminalBlock.GyroPower == 0 ? 1 : terminalBlock.GyroPower;
+                terminalBlock.Enabled = true;
+                terminalBlock.GyroOverride = true;
+                terminalBlock.GyroPower = gyroPower;
             }
             protected void SetRotation(MyTuple<PrincipalAxis, int> rotationAxis, float radPerSecond) {
                 Enable(true);
                 switch(rotationAxis.Item1) {
                     case PrincipalAxis.Pitch:
-                        gyroBlock.Pitch = rotationAxis.Item2 * radPerSecond;
+                        terminalBlock.Pitch = rotationAxis.Item2 * radPerSecond;
                         break;
                     case PrincipalAxis.Yaw:
-                        gyroBlock.Yaw = rotationAxis.Item2 * radPerSecond;
+                        terminalBlock.Yaw = rotationAxis.Item2 * radPerSecond;
                         break;
                     case PrincipalAxis.Roll:
-                        gyroBlock.Roll = rotationAxis.Item2 * radPerSecond;
+                        terminalBlock.Roll = rotationAxis.Item2 * radPerSecond;
                         break;
                 }
             }
@@ -280,10 +236,10 @@ namespace IngameScript {
             }
             public void StopRotation(bool leaveOverrideOn = false) {
                 Enable();
-                gyroBlock.Pitch = 0;
-                gyroBlock.Yaw = 0;
-                gyroBlock.Roll = 0;
-                gyroBlock.GyroOverride = leaveOverrideOn;
+                terminalBlock.Pitch = 0;
+                terminalBlock.Yaw = 0;
+                terminalBlock.Roll = 0;
+                terminalBlock.GyroOverride = leaveOverrideOn;
             }
         }
         public sealed class SunOrbit {
@@ -304,15 +260,14 @@ namespace IngameScript {
             private readonly bool isSolarAnalyzer;
 
             private Vector3D _planeNormal = Vector3D.Zero;
-            private int _rotationDirection = 0; //1 is clockwise, -1 is counter clockwise, Down aligned with planeNormal (right hand rule, fingers pointing in clockwise direction)
+            private int _rotationDirection = 0; //1 is clockwise, -1 is counter clockwise, Down aligned with planeNormal https://en.wikipedia.org/wiki/Right-hand_rule#Rotations
             private float _angularSpeed = 0; //in Radians per second
             public enum DataPoint { PlaneNormal = 1, Direction, AngularSpeed }
-            public enum RotationDirection { Clockwise = 1, CounterClockwise = -1 }
             public Vector3D PlaneNormal {
                 get { return _planeNormal; }
                 set { _planeNormal = Vector3D.IsZero(value) ? _planeNormal : Vector3D.Normalize(value); }
             }
-            public int Direction {
+            public int RotationDirection {
                 get { return _rotationDirection; }
                 set { _rotationDirection = value == 1 || value == -1 ? value : _rotationDirection; }
             }
@@ -331,7 +286,7 @@ namespace IngameScript {
                     broadcastOVERRIDEDataListener = IGC.RegisterBroadcastListener(IGC_BROADCAST_OVERRIDE_DATA_TAG);
                     broadcastOVERRIDEDataListener.SetMessageCallback();
                 }
-                if(fillWithMockData) { PlaneNormal = new Vector3D(0, 1, 0); Direction = 1; AngularSpeedRadPS = 0.001f; }
+                if(fillWithMockData) { PlaneNormal = new Vector3D(0, 1, 0); RotationDirection = 1; AngularSpeedRadPS = 0.001f; }
             }
             public bool IsMapped(DataPoint dataPoint = 0) {
                 switch(dataPoint) {
@@ -385,11 +340,11 @@ namespace IngameScript {
                 Vector3D outVec;
                 Vector3D.TryParse(data.Item1, out outVec);
                 PlaneNormal = outVec;
-                Direction = data.Item2;
+                RotationDirection = data.Item2;
                 AngularSpeedRadPS = data.Item3;
             }
             private MyTuple<string, int, float> IGC_GenerateMessage() {
-                return new MyTuple<string, int, float>(PlaneNormal.ToString(), Direction, AngularSpeedRadPS);
+                return new MyTuple<string, int, float>(_planeNormal.ToString(), _rotationDirection, _angularSpeed);
             }
             public void IGC_ProcessMessages() {
                 if(IsMapped(DataPoint.PlaneNormal)) {
@@ -413,28 +368,60 @@ namespace IngameScript {
             }
             #endregion
             public string PrintableDataPoints() {
-                return $"{INI_KEY_PLANE_NORMAL} = {PlaneNormal}\n" +
-                    $"{INI_KEY_DIRECTION} = {Direction}\n" +
-                    $"{INI_KEY_ANGULAR_SPEED} = {AngularSpeedRadPS}\n";
+                return $"{INI_KEY_PLANE_NORMAL} = {_planeNormal}\n" +
+                    $"{INI_KEY_DIRECTION} = {_rotationDirection}\n" +
+                    $"{INI_KEY_ANGULAR_SPEED} = {_angularSpeed}\n";
+            }
+            public bool PrintGPSCoordsRepresentingOrbit(IMyTextPanel lcd) {
+                if(IsMapped(DataPoint.PlaneNormal)) {
+                    string colorHexPlaneNormal = "#FF6900";
+                    string colorHexOrbitPoint = "#FFCF00";
+
+                    Vector3D gridaxis1 = Vector3D.CalculatePerpendicularVector(_planeNormal);
+                    Vector3D gridaxis3 = Vector3D.Normalize(gridaxis1.Cross(_planeNormal));
+                    Vector3D gridaxis2 = Vector3D.Normalize(gridaxis1 + gridaxis3);
+                    Vector3D gridaxis4 = Vector3D.Normalize(gridaxis2.Cross(_planeNormal));
+
+                    Vector3D[] gpsConvertables = {
+                        gridaxis1,
+                        gridaxis2,
+                        gridaxis3,
+                        gridaxis4,
+                        -gridaxis1,
+                        -gridaxis2,
+                        -gridaxis3,
+                        -gridaxis4,};
+                    Func<Vector3D, string, string, string> toGPSString = (vec, coordName, colorHex) => {
+                        vec.Normalize();
+                        vec *= Math.Pow(10, 12);
+                        return $"GPS:{coordName}:{vec.X}:{vec.Y}:{vec.Z}:{colorHex}:";
+                    };
+                    string printable = toGPSString(_planeNormal, "Sun Orbit Normal", colorHexPlaneNormal) + "\n";
+                    printable += toGPSString(-_planeNormal, "Sun Orbit Opposite Normal", colorHexPlaneNormal) + "\n";
+                    for(int i = 0; i < gpsConvertables.Length; i++) printable += toGPSString(gpsConvertables[i], $"Sun Orbit Point[{i + 1}]", colorHexOrbitPoint) + "\n";
+                    lcd.WriteText(printable);
+                    return true;
+                }
+                else return false;
             }
             public float DaytimeInMinutes() {
-                return IsMapped(DataPoint.AngularSpeed) ? (float)(2 * Math.PI / AngularSpeedRadPS / 60) : float.NaN;
+                return IsMapped(DataPoint.AngularSpeed) ? (float)(2 * Math.PI / _angularSpeed / 60) : float.NaN;
             }
         }
         public Program() {
             InitializeBlocks();
             sunOrbit = new SunOrbit(IGC, true);
             #region ReadFromIni
-            storageIni.TryParse(Storage);
-            currentRoutine = (Routine)storageIni.Get(INI_SECTION_NAME, INI_KEY_CURRENT_ROUTINE).ToInt32();
-            routineToResumeOn = (Routine)storageIni.Get(INI_SECTION_NAME, INI_KEY_ROUTINE_TO_RESUME_ON).ToInt32();
-            Vector3D.TryParse(storageIni.Get(INI_SECTION_NAME, INI_KEY_BUFFER_VECTOR).ToString(Vector3D.Zero.ToString()), out bufferVector);
+            _ini.TryParse(Storage);
+            currentRoutine = (Routine)_ini.Get(INI_SECTION_NAME, INI_KEY_CURRENT_ROUTINE).ToInt32();
+            routineToResumeOn = (Routine)_ini.Get(INI_SECTION_NAME, INI_KEY_ROUTINE_TO_RESUME_ON).ToInt32();
+            Vector3D.TryParse(_ini.Get(INI_SECTION_NAME, INI_KEY_BUFFER_VECTOR).ToString(), out bufferVector);
             if(currentRoutine == Routine.DetermineSunAngularSpeed) {
-                float storedFloatListAverage = storageIni.Get(INI_SECTION_NAME, INI_KEY_FLOAT_LIST_AVERAGE).ToSingle();
-                int storedFloatListCount = storageIni.Get(INI_SECTION_NAME, INI_KEY_FLOAT_LIST_COUNT).ToInt32();
+                float storedFloatListAverage = _ini.Get(INI_SECTION_NAME, INI_KEY_FLOAT_LIST_AVERAGE).ToSingle();
+                int storedFloatListCount = _ini.Get(INI_SECTION_NAME, INI_KEY_FLOAT_LIST_COUNT).ToInt32();
                 for(int i = 0; i < storedFloatListCount; i++) floatList.Add(storedFloatListAverage);
             }
-            sunOrbit.ReadFromIni(storageIni);
+            sunOrbit.ReadFromIni(_ini);
             #endregion
             #region Dictionary routines
             dicRoutines = new Dictionary<Routine, Action>() {
@@ -497,16 +484,16 @@ namespace IngameScript {
             ChangeCurrentRoutine(currentRoutine);
         }
         public void Save() {
-            storageIni.Clear();
-            storageIni.Set(INI_SECTION_NAME, INI_KEY_CURRENT_ROUTINE, (int)currentRoutine);
-            storageIni.Set(INI_SECTION_NAME, INI_KEY_ROUTINE_TO_RESUME_ON, (int)currentRoutine);
-            storageIni.Set(INI_SECTION_NAME, INI_KEY_BUFFER_VECTOR, bufferVector.ToString());
+            _ini.Clear();
+            _ini.Set(INI_SECTION_NAME, INI_KEY_CURRENT_ROUTINE, (int)currentRoutine);
+            _ini.Set(INI_SECTION_NAME, INI_KEY_ROUTINE_TO_RESUME_ON, (int)routineToResumeOn);
+            _ini.Set(INI_SECTION_NAME, INI_KEY_BUFFER_VECTOR, bufferVector.ToString());
             if(currentRoutine == Routine.DetermineSunAngularSpeed) {
-                storageIni.Set(INI_SECTION_NAME, INI_KEY_FLOAT_LIST_AVERAGE, floatList.Average());
-                storageIni.Set(INI_SECTION_NAME, INI_KEY_FLOAT_LIST_COUNT, floatList.Count);
+                _ini.Set(INI_SECTION_NAME, INI_KEY_FLOAT_LIST_AVERAGE, floatList.Average());
+                _ini.Set(INI_SECTION_NAME, INI_KEY_FLOAT_LIST_COUNT, floatList.Count);
             }
-            sunOrbit.WriteToIni(storageIni);
-            Storage = storageIni.ToString();
+            sunOrbit.WriteToIni(_ini);
+            Storage = _ini.ToString();
         }
         public void Main(string argument, UpdateType updateSource) {
             Echo(Runtime.LastRunTimeMs.ToString());
@@ -537,14 +524,14 @@ namespace IngameScript {
             for(int i = 0; i < registeredGyros.Count; i++) registeredGyros[i].StopRotation(true);
             switch(targetRoutine) {
                 case Routine.None:
-                    for(int i = 0; i < registeredGyros.Count; i++) registeredGyros[i].gyroBlock.GyroOverride = false;
+                    for(int i = 0; i < registeredGyros.Count; i++) registeredGyros[i].terminalBlock.GyroOverride = false;
                     updateFrequency = UpdateFrequency.None;
                     break;
                 case Routine.Pause:
                     if(routineToResumeOn == Routine.DetermineSunPlaneNormalManual) targetRoutineRepeats = 3;
                     break;
                 case Routine.DetermineSunPlaneNormalManual:
-                    for(int i = 0; i < registeredGyros.Count; i++) registeredGyros[i].gyroBlock.GyroOverride = false;
+                    for(int i = 0; i < registeredGyros.Count; i++) registeredGyros[i].terminalBlock.GyroOverride = false;
                     break;
                 case Routine.DetermineSunPlaneNormal:
                     updateFrequency = UpdateFrequency.Update10 | UpdateFrequency.Update100;
@@ -568,7 +555,7 @@ namespace IngameScript {
                     updateFrequency = UpdateFrequency.Update1 | UpdateFrequency.Update100;
                     break;
                 case Routine.Debug:
-                    foreach(Gyroscope gyro in registeredGyros) gyro.SetRotation(PrincipalAxis.Yaw, sunOrbit.AngularSpeedRadPS * sunOrbit.Direction);
+                    foreach(Gyroscope gyro in registeredGyros) gyro.SetRotation(PrincipalAxis.Yaw, sunOrbit.AngularSpeedRadPS * sunOrbit.RotationDirection);
                     break;
             }
             currentRoutine = targetRoutine;
@@ -671,7 +658,7 @@ namespace IngameScript {
                 if(currentRoutineRepeats > 0) floatList.Add(Math.Sign(exposureDelta));
                 currentRoutineRepeats++;
                 if(floatList.Count >= MEASUREMENTS_TARGET_AMOUNT_SUN_DIRECTION) {
-                    sunOrbit.Direction = Math.Sign(floatList.Average());
+                    sunOrbit.RotationDirection = Math.Sign(floatList.Average());
                     floatList.Clear();
                     ChangeCurrentRoutine(NextRoutineToMapSunOrbit());
                 }
@@ -688,7 +675,7 @@ namespace IngameScript {
                 currentRoutineRepeats++;
                 //TODO: Increase the amount of data points needed or find a better algorithm that doesn't require as many data points, eventually
                 if(floatList.Count >= MEASUREMENTS_TARGET_AMOUNT_SUN_SPEED) {
-                    sunOrbit.AngularSpeedRadPS = floatList.Average() * sunOrbit.Direction;
+                    sunOrbit.AngularSpeedRadPS = floatList.Average() * sunOrbit.RotationDirection;
                     floatList.Clear();
                     ChangeCurrentRoutine(NextRoutineToMapSunOrbit());
                 }
@@ -711,7 +698,7 @@ namespace IngameScript {
             GridTerminalSystem.GetBlocksOfType(gyroList, gyro => gyro.IsSameConstructAs(Me));
             foreach(IMyGyro gyro in gyroList) registeredGyros.Add(new Gyroscope(referenceSolarPanel, gyro));
         }
-        public T GetBlock<T>(string blockName = "", List<IMyTerminalBlock> blocks = null) {
+        public T GetBlock<T>(string blockName = "", List<IMyTerminalBlock> blocks = null) where T : IMyTerminalBlock {
             var blocksLocal = blocks ?? new List<IMyTerminalBlock>(); ;
             T myBlock = (T)GridTerminalSystem.GetBlockWithName(blockName);
             if(!(myBlock is object) && !(blocks is object)) GridTerminalSystem.GetBlocks(blocksLocal);

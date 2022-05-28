@@ -43,16 +43,11 @@ namespace IngameScript {
          */
         const string NAME_SOLAR_INSTALLATION = "Solar Installation"; //used as both an identifier as a section in Custom Data and as a Custom Name suffix/prefix
         const string NAME_PROGRAMMABLE_BLOCK = "Solar Installation Manager";
-        const float MASS_LARGE_SOLAR_PANEL = 416.8f; //in kg, vanilla is 416.8kg
-        const float MASS_SMALL_SOLAR_PANEL = 143.2f; //in kg, vanilla is 143.2kg
-        const float MAX_POSSIBLE_OUTPUT_LARGE_SOLAR_PANEL = 0.16f; //in MW, vanilla is 0.16
-        const float MAX_POSSIBLE_OUTPUT_SMALL_SOLAR_PANEL = 0.04f; //in MW, vanilla is 0.04
         const bool HIDE_SOLAR_INSTALLATION_BLOCKS_IN_TERMINAL = true;
         const bool SETUP_IMMEDIATELY_AFTER_REGISTRATION = true; //if true, upon successfully registering (initializing) a SolarInstallation, it will immediately set up its rotors' angles
         const bool ADD_TO_ALIGNMENT_CYCLE_UPON_SETUP = true; //if true, upon successfully initializing a SolarInstallation, it is immediately added to the alignment cycle
         const float ALIGNMENT_SUCCESS_THRESHOLD = 0.999985f;
         const int HIBERNATION_PERIOD = 180; //in multiples of 100/60~1.6667s, 36 = 1min, 180 = 5min
-        const float SETUP_SUCCESS_RANGE = 0.01f; //in radians
 
         readonly Func<MyCubeSize, float> maxPossibleOutputMW = gridSize => gridSize == MyCubeSize.Small ? 0.04f : 0.16f; //in MW
         readonly Func<string, string[], bool> stringEqualsArrayElementIgnoreCase = (str, strArray) => {
@@ -66,35 +61,383 @@ namespace IngameScript {
 
         int hibernationTick;
         IMyTextSurface lcd;
-        Vector3D sunPlaneNormal;
-        RotationDirection sunOrbitRotationDirection; //Rotors where rotorBase.Up.Dot(sunPlaneNormal) > 0 use this rotation direction, otherwise negative
 
-        Routines currentRoutine = Routines.None;
-        Dictionary<string, SolarInstallation> registeredInstallationsDic = new Dictionary<string, SolarInstallation>();
-        HashSet<SolarInstallation> activeInstallationsSet = new HashSet<SolarInstallation>();
+        UpdateType currentUpdateSource;
+        Routine currentRoutine;
+        readonly Dictionary<string, SolarInstallation> registeredInstallationsDic = new Dictionary<string, SolarInstallation>();
+        readonly HashSet<SolarInstallation> maintainedInstallationsSet = new HashSet<SolarInstallation>();
+        readonly RotationHelper rotationHelper = new RotationHelper();
+        readonly SunOrbit sunOrbit;
 
-        StringBuilder logger = new StringBuilder();
-        MyIni _ini = new MyIni();
-        MyCommandLine _commandLine = new MyCommandLine();
-        Dictionary<Routines, Action> dicRoutines;
-        Dictionary<string, Action> dicCommands;
-        public enum RotationDirection { Clockwise = 1, CounterClockwise = -1 }
-        public enum SIStatus { Idle, SettingUp, AligningToSun, HasAligned }
-        public enum Routines { None, Hibernate, ManageSolarInstallations }
-        public class SolarInstallation {
-            IMySolarPanel referenceSolarPanel;
-            IMyMotorStator rotorBase;
-            IMyMotorStator hingeBase;
-            IMyMotorStator rotorTop;
-            public int solarPanelCount { get; }
+        readonly StringBuilder logger = new StringBuilder();
+        readonly MyIni _ini = new MyIni();
+        readonly MyCommandLine _commandLine = new MyCommandLine();
+        readonly Dictionary<Routine, Action> dicRoutines;
+        readonly Dictionary<string, Action> dicCommands;
+        public enum Routine { None, Hibernate, ManageSolarInstallations }
+        public enum PrincipalAxis { Pitch, Yaw, Roll }
+        public sealed class RotationHelper {
+            //The following two are mostly only useful for gyroscope rotation, as all 3 axes are available to us.
+            //E.g. I want my RC.Forward to align to (0, 1, 0), I require the axes that aren't irrelevant in that rotation (Roll is), and those respective axes' planeNormals for the dot product measure
+            readonly private PrincipalAxis[] _rotationAxes = new PrincipalAxis[2]; //The gyroscope operates via Pitch/Yaw/Roll, so the respective axes are stored for a given rotation task.
+            readonly private Base6Directions.Direction[] _dotProductFactorDirections = new Base6Directions.Direction[2]; //As alignment is done by setting the dot product of 2 axes to 0, the directions for those two axes needs to be stored
+            public PrincipalAxis[] RotationAxes { get { return _rotationAxes; } }
+            public Base6Directions.Direction[] DotProductFactorDirections { get { return _dotProductFactorDirections; } }
+            public Vector3D RotatedVectorClockwise { get; private set; }
+            public Vector3D RotatedVectorCounterClockwise { get; private set; }
+            public void DetermineAlignmentRotationAxesAndDirections(Base6Directions.Direction directionToAlignToAnyFutureTarget) {
+                switch(directionToAlignToAnyFutureTarget) {
+                    case Base6Directions.Direction.Forward:
+                        _rotationAxes[0] = PrincipalAxis.Pitch;
+                        _dotProductFactorDirections[0] = Base6Directions.Direction.Up;
+                        _rotationAxes[1] = PrincipalAxis.Yaw;
+                        _dotProductFactorDirections[1] = Base6Directions.Direction.Right;
+                        break;
+                    case Base6Directions.Direction.Backward:
+                        _rotationAxes[0] = PrincipalAxis.Pitch;
+                        _dotProductFactorDirections[0] = Base6Directions.Direction.Down;
+                        _rotationAxes[1] = PrincipalAxis.Yaw;
+                        _dotProductFactorDirections[1] = Base6Directions.Direction.Left;
+                        break;
+                    case Base6Directions.Direction.Right:
+                        _rotationAxes[0] = PrincipalAxis.Yaw;
+                        _dotProductFactorDirections[0] = Base6Directions.Direction.Backward;
+                        _rotationAxes[1] = PrincipalAxis.Roll;
+                        _dotProductFactorDirections[1] = Base6Directions.Direction.Down;
+                        break;
+                    case Base6Directions.Direction.Left:
+                        _rotationAxes[0] = PrincipalAxis.Yaw;
+                        _dotProductFactorDirections[0] = Base6Directions.Direction.Forward;
+                        _rotationAxes[1] = PrincipalAxis.Roll;
+                        _dotProductFactorDirections[1] = Base6Directions.Direction.Up;
+                        break;
+                    case Base6Directions.Direction.Up:
+                        _rotationAxes[0] = PrincipalAxis.Pitch;
+                        _dotProductFactorDirections[0] = Base6Directions.Direction.Backward;
+                        _rotationAxes[1] = PrincipalAxis.Roll;
+                        _dotProductFactorDirections[1] = Base6Directions.Direction.Right;
+                        break;
+                    case Base6Directions.Direction.Down:
+                        _rotationAxes[0] = PrincipalAxis.Pitch;
+                        _dotProductFactorDirections[0] = Base6Directions.Direction.Forward;
+                        _rotationAxes[1] = PrincipalAxis.Roll;
+                        _dotProductFactorDirections[1] = Base6Directions.Direction.Left;
+                        break;
+                }
+            }
+            public void GenerateRotatedNormalizedVectorsAroundAxisByAngle(Vector3D vectorToRotate, Vector3D rotationAxis, double angle) {
+                vectorToRotate.Normalize();
+                rotationAxis.Normalize();
+                RotatedVectorClockwise = Vector3D.Transform(vectorToRotate, MatrixD.CreateFromQuaternion(QuaternionD.CreateFromAxisAngle(rotationAxis, angle)));
+                RotatedVectorCounterClockwise = Vector3D.Transform(vectorToRotate, MatrixD.CreateFromQuaternion(QuaternionD.CreateFromAxisAngle(rotationAxis, -angle)));
+            }
+            public bool IsAlignedWithNormalizedTargetVector(Vector3D targetVec, Vector3D measureVec, float alignmentSuccessThreshold = 0.0001f) {
+                return Vector3D.Dot(targetVec, measureVec) >= 1 - alignmentSuccessThreshold;
+            }
+            public Vector3D NormalizedVectorProjectedOntoPlane(Vector3D vecToProject, Vector3D planeNormal) {
+                vecToProject.Normalize();
+                planeNormal.Normalize();
+                return Vector3D.Normalize(vecToProject - vecToProject.Dot(planeNormal) * planeNormal);
+            }
+        }
+        public class Rotor {
+            private const float ANGLE_LIMIT = (float)Math.PI * 2;
+            public const float ALIGNMENT_PRECISION_THRESHOLD = 0.0000001f;
+            readonly public IMyMotorStator terminalBlock;
+            protected virtual float AngleLimit { get { return ANGLE_LIMIT; } }
+            public Vector3D LocalRotationAxis { get { return terminalBlock.WorldMatrix.Up; } }
+            public Rotor(IMyMotorStator terminalBlock) {
+                this.terminalBlock = terminalBlock;
+            }
+            protected void Enable() {
+                terminalBlock.Enabled = true;
+                terminalBlock.Torque = 1000;
+            }
+            public void Unlock() {
+                Enable();
+                terminalBlock.RotorLock = false;
+                terminalBlock.TargetVelocityRad = 0;
+                terminalBlock.UpperLimitRad = float.MaxValue;
+                terminalBlock.LowerLimitRad = float.MinValue;
+            }
+            public void Lock() {
+                Enable();
+                terminalBlock.RotorLock = true;
+                terminalBlock.TargetVelocityRad = 0;
+            }
+            public double AlignToVector(RotationHelper rhInstance, Vector3D origin, Vector3D target) {
+                return AlignToVector(rhInstance, origin, target, LocalRotationAxis);
+            }
+            /// <summary>Intended to be called only once on a non-moving rotor. Alignment measurements are imprecise when rotors are moving.</summary>
+            /// <param name="alternateRotationAxis">Used instead of LocalRotationAxis to calculate the angle of rotation.</param>
+            public double AlignToVector(RotationHelper rhInstance, Vector3D origin, Vector3D target, Vector3D alternateRotationAxis) {
+                if(rhInstance.IsAlignedWithNormalizedTargetVector(target, origin, ALIGNMENT_PRECISION_THRESHOLD)) return 0;
+                origin = rhInstance.NormalizedVectorProjectedOntoPlane(origin, alternateRotationAxis);
+                target = rhInstance.NormalizedVectorProjectedOntoPlane(target, alternateRotationAxis);
+                double theta = Math.Acos(origin.Dot(target));
+                theta *= Math.Sign(origin.Cross(alternateRotationAxis).Dot(target));
+                RotateByAngle(theta);
+                return theta;
+            }
+            public virtual void RotateByAngle(double angleDelta) {
+                float targetAngle = terminalBlock.Angle + (float)angleDelta;
+                Unlock();
+                if(targetAngle > AngleLimit) {
+                    terminalBlock.LowerLimitRad = SignSwappedAngle(terminalBlock.Angle);
+                    terminalBlock.UpperLimitRad = ClampedAngleWithinLimit(targetAngle);
+                    terminalBlock.TargetVelocityRPM = 1;
+                }
+                else if(targetAngle < -AngleLimit) {
+                    terminalBlock.UpperLimitRad = SignSwappedAngle(terminalBlock.Angle);
+                    terminalBlock.LowerLimitRad = ClampedAngleWithinLimit(targetAngle);
+                    terminalBlock.TargetVelocityRPM = -1;
+                }
+                else if(targetAngle < terminalBlock.Angle) {
+                    terminalBlock.LowerLimitRad = targetAngle;
+                    terminalBlock.UpperLimitRad = terminalBlock.Angle;
+                    terminalBlock.TargetVelocityRPM = -1;
+                }
+                else {
+                    terminalBlock.UpperLimitRad = targetAngle;
+                    terminalBlock.LowerLimitRad = terminalBlock.Angle;
+                    terminalBlock.TargetVelocityRPM = 1;
+                }
+            }
+            private float ClampedAngleWithinLimit(float angle) {
+                //Only works if 2*-AngleLimit >= angle <= 2*AngleLimit
+                float returnAngle;
+                if(angle < AngleLimit && angle > -AngleLimit) returnAngle = angle;
+                else if(angle < 0) returnAngle = angle + AngleLimit;
+                else returnAngle = angle - AngleLimit;
+                return returnAngle;
+            }
+            protected float SignSwappedAngle(float angle) {
+                float returnAngle;
+                if(angle < 0) returnAngle = AngleLimit + angle;
+                else returnAngle = -AngleLimit + angle;
+                return returnAngle;
+            }
+        }
+        public sealed class Hinge : Rotor {
+            private const float ANGLE_LIMIT = (float)Math.PI / 2;
+            protected override float AngleLimit { get { return ANGLE_LIMIT; } }
+            /// <summary>
+            /// Gets the top part's facing vector, if one is attached. Otherwise returns Vector3D.Zero.
+            /// </summary>
+            public Vector3D HingeFacing {
+                get {
+                    if(terminalBlock.IsAttached) return terminalBlock.Top.WorldMatrix.Left;
+                    else return Vector3D.Zero;
+                }
+            }
+            public Hinge(IMyMotorStator terminalBlock) : base(terminalBlock) { }
+            public new void Unlock() {
+                Enable();
+                terminalBlock.RotorLock = false;
+                terminalBlock.TargetVelocityRad = 0;
+                terminalBlock.UpperLimitRad = AngleLimit;
+                terminalBlock.LowerLimitRad = -AngleLimit;
+            }
+            public override void RotateByAngle(double angleDelta) {
+                float targetAngle = terminalBlock.Angle + (float)angleDelta;
+                Unlock();
+                if(targetAngle > AngleLimit) targetAngle = AngleLimit;
+                else if(targetAngle < -AngleLimit) targetAngle = -AngleLimit;
+                if(targetAngle < terminalBlock.Angle) {
+                    terminalBlock.LowerLimitRad = targetAngle;
+                    terminalBlock.UpperLimitRad = terminalBlock.Angle;
+                }
+                else {
+                    terminalBlock.UpperLimitRad = targetAngle;
+                    terminalBlock.LowerLimitRad = terminalBlock.Angle;
+                }
+                terminalBlock.TargetVelocityRPM = Math.Sign(targetAngle - terminalBlock.Angle);
+            }
+        }
+        public sealed class SunOrbit {
+            //Contains the minimum 3 data points to describe a sun orbit, sufficient enough to track the sun via a rotor or gyro
+            #region Fields and Properties
+            private const double MAXIMUM_ANGULAR_SPEED = 1d / 60 * 2 * Math.PI;
+            private const double MINIMUM_ANGULAR_SPEED = 1440d / 60 * 2 * Math.PI;
+            private const string INI_SECTION_NAME = "Sun Orbit";
+            private const string INI_KEY_PLANE_NORMAL = "Plane normal";
+            private const string INI_KEY_ANGULAR_SPEED = "Orbital speed";
+            private const string INI_KEY_DIRECTION = "Orbit direction";
+            private const string IGC_BROADCAST_REQUEST_DATA_TAG = "Sun Orbit Broadcast: Request data";
+            private const string IGC_BROADCAST_OVERRIDE_DATA_TAG = "Sun Orbit Broadcast: Override data";
+            private const string IGC_UNICAST_TAG = "Sun Orbit Unicast";
+            private readonly IMyIntergridCommunicationSystem IGC;
+            private readonly IMyBroadcastListener broadcastREQUESTDataListener;
+            private readonly IMyBroadcastListener broadcastOVERRIDEDataListener;
+            private readonly bool isSolarAnalyzer;
+
+            private Vector3D _planeNormal = Vector3D.Zero;
+            private int _rotationDirection = 0; //1 is clockwise, -1 is counter clockwise, Down aligned with planeNormal https://en.wikipedia.org/wiki/Right-hand_rule#Rotations
+            private float _angularSpeed = 0; //in Radians per second
+            public enum DataPoint { PlaneNormal = 1, Direction, AngularSpeed }
+            public Vector3D PlaneNormal {
+                get { return _planeNormal; }
+                set { _planeNormal = Vector3D.IsZero(value) ? _planeNormal : Vector3D.Normalize(value); }
+            }
+            public int RotationDirection {
+                get { return _rotationDirection; }
+                set { _rotationDirection = value == 1 || value == -1 ? value : _rotationDirection; }
+            }
+            public float AngularSpeedRadPS {
+                get { return _angularSpeed; }
+                set { _angularSpeed = value <= MAXIMUM_ANGULAR_SPEED && value > 0 ? value : _angularSpeed; }
+            }
+            #endregion
+            public SunOrbit(IMyIntergridCommunicationSystem IGC, bool isSolarAnalyzer, bool fillWithMockData = false) {
+                this.isSolarAnalyzer = isSolarAnalyzer;
+                this.IGC = IGC;
+                IGC.UnicastListener.SetMessageCallback();
+                broadcastREQUESTDataListener = IGC.RegisterBroadcastListener(IGC_BROADCAST_REQUEST_DATA_TAG);
+                broadcastREQUESTDataListener.SetMessageCallback();
+                if(!isSolarAnalyzer) {
+                    broadcastOVERRIDEDataListener = IGC.RegisterBroadcastListener(IGC_BROADCAST_OVERRIDE_DATA_TAG);
+                    broadcastOVERRIDEDataListener.SetMessageCallback();
+                }
+                if(fillWithMockData) { PlaneNormal = new Vector3D(0, 1, 0); RotationDirection = 1; AngularSpeedRadPS = 0.001f; }
+            }
+            public bool IsMapped(DataPoint dataPoint = 0) {
+                switch(dataPoint) {
+                    case DataPoint.PlaneNormal:
+                        return !_planeNormal.IsZero();
+                    case DataPoint.Direction:
+                        return _rotationDirection != 0;
+                    case DataPoint.AngularSpeed:
+                        return _angularSpeed != 0;
+                    default:
+                        return !_planeNormal.IsZero() && _rotationDirection != 0 && _angularSpeed != 0;
+                }
+            }
+            public void ClearData(DataPoint dataPoint = 0) {
+                switch(dataPoint) {
+                    case DataPoint.PlaneNormal:
+                        _planeNormal = Vector3D.Zero;
+                        break;
+                    case DataPoint.AngularSpeed:
+                        _angularSpeed = 0;
+                        break;
+                    case DataPoint.Direction:
+                        _rotationDirection = 0;
+                        break;
+                    default:
+                        _planeNormal = Vector3D.Zero;
+                        _rotationDirection = 0;
+                        _angularSpeed = 0;
+                        break;
+                }
+            }
+            #region Save & Load functions
+            public void WriteToIni(MyIni ini) {
+                ini.Set(INI_SECTION_NAME, INI_KEY_PLANE_NORMAL, _planeNormal.ToString());
+                ini.Set(INI_SECTION_NAME, INI_KEY_DIRECTION, _rotationDirection);
+                ini.Set(INI_SECTION_NAME, INI_KEY_ANGULAR_SPEED, _angularSpeed);
+            }
+            public void ReadFromIni(MyIni ini) {
+                if(ini.ContainsSection(INI_SECTION_NAME)) {
+                    Vector3D.TryParse(ini.Get(INI_SECTION_NAME, INI_KEY_PLANE_NORMAL).ToString(), out _planeNormal);
+                    _rotationDirection = ini.Get(INI_SECTION_NAME, INI_KEY_DIRECTION).ToInt32();
+                    _angularSpeed = ini.Get(INI_SECTION_NAME, INI_KEY_ANGULAR_SPEED).ToSingle();
+                }
+            }
+            #endregion
+            #region IGC functions
+            //Features: Send and override broadcast that, when received by non-analyzers, replaces all their data
+            //Upon receiving a data request broadcast, send a unicast message back to the requestor. Narrower query to only request from Analyzers possible
+            private void IGC_OverrideDataFromMessage(MyIGCMessage message) {
+                MyTuple<string, int, float> data = (MyTuple<string, int, float>)message.Data;
+                Vector3D outVec;
+                Vector3D.TryParse(data.Item1, out outVec);
+                PlaneNormal = outVec;
+                RotationDirection = data.Item2;
+                AngularSpeedRadPS = data.Item3;
+            }
+            private MyTuple<string, int, float> IGC_GenerateMessage() {
+                return new MyTuple<string, int, float>(_planeNormal.ToString(), _rotationDirection, _angularSpeed);
+            }
+            public void IGC_ProcessMessages() {
+                if(IsMapped(DataPoint.PlaneNormal)) {
+                    while(broadcastREQUESTDataListener.HasPendingMessage) {
+                        MyIGCMessage requestDataMessage = broadcastREQUESTDataListener.AcceptMessage();
+                        if(!((bool)requestDataMessage.Data && !isSolarAnalyzer))
+                            IGC.SendUnicastMessage(requestDataMessage.Source, IGC_UNICAST_TAG, IGC_GenerateMessage());
+                    }
+                }
+                if(!isSolarAnalyzer) while(broadcastOVERRIDEDataListener.HasPendingMessage) IGC_OverrideDataFromMessage(broadcastOVERRIDEDataListener.AcceptMessage());
+                while(IGC.UnicastListener.HasPendingMessage) {
+                    MyIGCMessage unicastMessage = IGC.UnicastListener.AcceptMessage();
+                    if(unicastMessage.Tag == IGC_UNICAST_TAG) IGC_OverrideDataFromMessage(unicastMessage);
+                }
+            }
+            public void IGC_BroadcastOverrideData() {
+                if(IsMapped()) IGC.SendBroadcastMessage(IGC_BROADCAST_OVERRIDE_DATA_TAG, IGC_GenerateMessage());
+            }
+            public void IGC_BroadcastRequestData(bool requestOnlyFromAnalyzers) {
+                if(!isSolarAnalyzer) IGC.SendBroadcastMessage(IGC_BROADCAST_REQUEST_DATA_TAG, requestOnlyFromAnalyzers);
+            }
+            #endregion
+            public string PrintableDataPoints() {
+                return $"{INI_KEY_PLANE_NORMAL} = {_planeNormal}\n" +
+                    $"{INI_KEY_DIRECTION} = {_rotationDirection}\n" +
+                    $"{INI_KEY_ANGULAR_SPEED} = {_angularSpeed}\n";
+            }
+            public bool PrintGPSCoordsRepresentingOrbit(IMyTextPanel lcd) {
+                if(IsMapped(DataPoint.PlaneNormal)) {
+                    string colorHexPlaneNormal = "#FF6900";
+                    string colorHexOrbitPoint = "#FFCF00";
+
+                    Vector3D gridaxis1 = Vector3D.CalculatePerpendicularVector(_planeNormal);
+                    Vector3D gridaxis3 = Vector3D.Normalize(gridaxis1.Cross(_planeNormal));
+                    Vector3D gridaxis2 = Vector3D.Normalize(gridaxis1 + gridaxis3);
+                    Vector3D gridaxis4 = Vector3D.Normalize(gridaxis2.Cross(_planeNormal));
+
+                    Vector3D[] gpsConvertables = {
+                        gridaxis1,
+                        gridaxis2,
+                        gridaxis3,
+                        gridaxis4,
+                        -gridaxis1,
+                        -gridaxis2,
+                        -gridaxis3,
+                        -gridaxis4,};
+                    Func<Vector3D, string, string, string> toGPSString = (vec, coordName, colorHex) => {
+                        vec.Normalize();
+                        vec *= Math.Pow(10, 12);
+                        return $"GPS:{coordName}:{vec.X}:{vec.Y}:{vec.Z}:{colorHex}:";
+                    };
+                    string printable = toGPSString(_planeNormal, "Sun Orbit Normal", colorHexPlaneNormal) + "\n";
+                    printable += toGPSString(-_planeNormal, "Sun Orbit Opposite Normal", colorHexPlaneNormal) + "\n";
+                    for(int i = 0; i < gpsConvertables.Length; i++) printable += toGPSString(gpsConvertables[i], $"Sun Orbit Point[{i + 1}]", colorHexOrbitPoint) + "\n";
+                    lcd.WriteText(printable);
+                    return true;
+                }
+                else return false;
+            }
+            public float DaytimeInMinutes() {
+                return IsMapped(DataPoint.AngularSpeed) ? (float)(2 * Math.PI / _angularSpeed / 60) : float.NaN;
+            }
+        }
+        public sealed class SolarInstallation {
+            private const float MASS_LARGE_SOLAR_PANEL = 416.8f; //in kg, vanilla is 416.8kg
+            private const float MASS_SMALL_SOLAR_PANEL = 143.2f; //in kg, vanilla is 143.2kg
+            private const float MAX_POSSIBLE_OUTPUT_LARGE_SOLAR_PANEL = 0.16f; //in MW, vanilla is 0.16
+            private const float MAX_POSSIBLE_OUTPUT_SMALL_SOLAR_PANEL = 0.04f; //in MW, vanilla is 0.04
+            private readonly float _maxPossibleSinglePanelOutput;
+            private readonly Vector3D _targetPlaneNormal;
+            public enum SIStatus { Idle, AligningToNormal, AligningToSun, MatchingSunSpeed, Aligned }
+            public readonly IMySolarPanel referenceSolarPanel;
+            public readonly Rotor rotorBase;
+            public readonly Hinge hingeBase;
+            public readonly Rotor rotorTop;
+            public int SolarPanelCount { get; private set; }
             public string ID { get; }
-            float maxPossibleSinglePanelOutput;
-            private float mostRecentSunExposure = 0;
             public SIStatus Status { get; private set; }
-            public bool IsHibernating { get; private set; }
 
             //TODO: RotationDirection can be defined by the sun analyzer, relative to the shipped normal vector
-            int rotationDirection = -1;
+            int rotationDirection;
 
             public SolarInstallation(IMySolarPanel referenceSolarPanel, IMyMotorStator rotorBase, IMyMotorStator hingeBase, IMyMotorStator rotorTop,
                 string id, int solarPanelCount) {
@@ -102,127 +445,72 @@ namespace IngameScript {
                 this.rotorBase = rotorBase;
                 this.hingeBase = hingeBase;
                 this.rotorTop = rotorTop;
-                ID = ID;
-                maxPossibleSinglePanelOutput = referenceSolarPanel.CubeGrid.GridSizeEnum == MyCubeSize.Small ?
+                ID = id;
+                _maxPossibleSinglePanelOutput = referenceSolarPanel.CubeGrid.GridSizeEnum == MyCubeSize.Small ?
                     MAX_POSSIBLE_OUTPUT_SMALL_SOLAR_PANEL : MAX_POSSIBLE_OUTPUT_LARGE_SOLAR_PANEL;
-                this.solarPanelCount = solarPanelCount;
-                CalibrateTorque();
+                UpdatePanelCount(solarPanelCount);
             }
-            void CalibrateTorque() {
+            public void UpdatePanelCount(int solarPanelCount) {
                 float torque = 1000;
-                if(referenceSolarPanel is object) torque += (referenceSolarPanel.CubeGrid.GridSizeEnum == MyCubeSize.Large ? MASS_LARGE_SOLAR_PANEL : MASS_SMALL_SOLAR_PANEL) * solarPanelCount;
-                rotorBase.Torque = torque;
-                hingeBase.Torque = torque;
-                rotorTop.Torque = torque;
+                SolarPanelCount = solarPanelCount;
+                if(referenceSolarPanel is object) torque += 
+                        (referenceSolarPanel.CubeGrid.GridSizeEnum == MyCubeSize.Large ? MASS_LARGE_SOLAR_PANEL : MASS_SMALL_SOLAR_PANEL) * solarPanelCount;
+                rotorTop.terminalBlock.Torque = torque;
             }
-            public void AlignToSun(float sunOrbitalPeriod, UpdateType updateSource) {
+            public void ChangeStatus(SIStatus targetStatus) {
+                
+            }
+            public void AlignToSun(SunOrbit soInstance, RotationHelper rhInstance) {
                 //TODO: Implement 0 sunshine handling and drastical sun exposure changes (e.g. when a ship's shadow blocks the ref panel partially)
-                float previousSunExposure = referenceSolarPanel.MaxOutput;
-                mostRecentSunExposure = referenceSolarPanel.MaxOutput / maxPossibleSinglePanelOutput;
-                float targetRPM = 1 / sunOrbitalPeriod + Math.Max(ALIGNMENT_SUCCESS_THRESHOLD * 3 - mostRecentSunExposure * 3, 0);
-                if(mostRecentSunExposure >= ALIGNMENT_SUCCESS_THRESHOLD) {
-                    targetRPM = 1 / sunOrbitalPeriod;
-                    Status = SIStatus.HasAligned;
+                float currentSunExposure = referenceSolarPanel.MaxOutput / _maxPossibleSinglePanelOutput;
+                if(currentSunExposure != 0) {
+                
                 }
-                rotorTop.TargetVelocityRPM = targetRPM * rotationDirection;
-                //echo($"{mostRecentSunExposure}\n{1 / sunOrbitalPeriod}\n{Math.Max(ALIGNMENT_SUCCESS_THRESHOLD * 3 - mostRecentSunExposure * 3, 0)}\n" +
-                //    $"targetRPM: {targetRPM}");
             }
-            public void Setup(Vector3D sunPlaneNormal) {
-                Func<Vector3D, Vector3D, Vector3D> projectedOntoPlane = (vecToProject, planeNormal) => vecToProject - vecToProject.Dot(planeNormal) * planeNormal;
-                //From: https://en.wikipedia.org/wiki/Rotation_matrix#Rotation_matrix_from_axis_and_angle
-                Func<Vector3D, Vector3D, double, Vector3D> rotatedVector = (vecToRotate, rotAxisNormal, angle) => {
-                    Vector3D rotationAxisNormalXvecToRotate = rotAxisNormal.Cross(vecToRotate);
-                    return rotAxisNormal * rotationAxisNormalXvecToRotate +
-                    (Math.Cos(angle) * rotationAxisNormalXvecToRotate).Cross(rotAxisNormal) +
-                    Math.Sin(angle) * rotationAxisNormalXvecToRotate;
-                };
-                Status = SIStatus.SettingUp;
+            public void AlignToNormal(RotationHelper rhInstance) {
+                Status = SIStatus.AligningToNormal;
 
-                //Stabilized vectors are required as subgrids tend to wobble
-                //hingeBase.Up (orthogonal to our rotorBase.Up vector) needs to align with the interSectionLine
-                Vector3D rotorBaseUp = rotorBase.WorldMatrix.Up;
-                Vector3D hingeBaseUpStabilized = Vector3D.Normalize(projectedOntoPlane(hingeBase.WorldMatrix.Up, rotorBaseUp)); //is orthogonal to rotorBaseUp
-                Vector3D rightSideOrthogonalVecOfHingeUp = hingeBaseUpStabilized.Cross(rotorBaseUp);
-                Vector3D intersectionLine = Vector3D.Normalize(rotorBaseUp.Cross(sunPlaneNormal));
-                Vector3D intersectionVecTarget = hingeBaseUpStabilized.Dot(intersectionLine) >= 0 ? intersectionLine : -intersectionLine;
-                //Assuming we're facing 0 and our up is rotorBaseUp, positive is towards right, negative towards left rotation.
-                //this is reversed for the right hand rule rotation using the formula above, https://en.wikipedia.org/wiki/Right-hand_rule#Rotations
-                int directionSign = Math.Sign(rightSideOrthogonalVecOfHingeUp.Dot(intersectionVecTarget));
-                double angularDistanceToTarget = Math.Acos(intersectionVecTarget.Dot(hingeBaseUpStabilized)) * directionSign;
-                SetTargetAngle(rotorBase, false, (float)angularDistanceToTarget);
-
-                //Align hingeBaseLeft(-X) with sunPlaneNormalTarget => angle distance OR simply take angle between rotorBaseUp & sunPlaneNormalTarget => position angle
-                Vector3D sunPlaneNormalTarget = rotorBaseUp.Dot(sunPlaneNormal) >= 0 ? sunPlaneNormal : -sunPlaneNormal;
-                //hingeBaseForward needs to be perpendicular to rotorBaseUp and then rotated around rotorBaseUp the angularDistanceToTarget to know whether + or - direction
-                Vector3D rotatedHingeBaseForward = rotatedVector(hingeBase.WorldMatrix.Forward, hingeBaseUpStabilized, -hingeBase.Angle);
-                rotatedHingeBaseForward = rotatedVector(rotatedHingeBaseForward, rotorBaseUp, -angularDistanceToTarget);
-                directionSign = Math.Sign(rotatedHingeBaseForward.Dot(sunPlaneNormalTarget));
-                double targetAngle = Math.Acos(rotorBaseUp.Dot(sunPlaneNormalTarget)) * directionSign;
-                SetTargetAngle(hingeBase, true, (float)targetAngle);
+                Vector3D hingeBaseForwardOrBackward = hingeBase.terminalBlock.WorldMatrix.Forward.Dot(_targetPlaneNormal) > 
+                    hingeBase.terminalBlock.WorldMatrix.Backward.Dot(_targetPlaneNormal) ?
+                    hingeBase.terminalBlock.WorldMatrix.Forward : hingeBase.terminalBlock.WorldMatrix.Backward;
+                double rotorBaseRotationAngle = rotorBase.AlignToVector(rhInstance, hingeBaseForwardOrBackward, _targetPlaneNormal);
+                rhInstance.GenerateRotatedNormalizedVectorsAroundAxisByAngle(_targetPlaneNormal, rotorBase.LocalRotationAxis, rotorBaseRotationAngle);
+                Vector3D rotatedTargetPlaneNormalVector = rhInstance.RotatedVectorClockwise.Dot(hingeBaseForwardOrBackward) >
+                    rhInstance.RotatedVectorCounterClockwise.Dot(hingeBaseForwardOrBackward) ?
+                    rhInstance.RotatedVectorClockwise : rhInstance.RotatedVectorCounterClockwise;
+                hingeBase.AlignToVector(rhInstance, hingeBase.HingeFacing, rotatedTargetPlaneNormalVector,
+                        rhInstance.NormalizedVectorProjectedOntoPlane(hingeBase.LocalRotationAxis, rotorBase.LocalRotationAxis));
             }
-            static void SetTargetAngle(IMyMotorStator rotorToSet, bool isHinge, float angularTarget) {
-                //treats angularTarget as a position if isHinge, otherwise treats angularTarget as an angular distance to travel (in the negative or positive direction)
-                //Rotors & Hinges overshoot their limit if their speed is quick and/or their acceleration powerful enough
-                //NOTE: Without anything but the rotor connected to the hinge top, at acceleration 2kN and 1RPM it seems to do fine consistently
-                //Hinge limit needs to be between -90° and 90° (0.5Pi rad)
-                //Rotor limit needs to be between -360° and 360°(2Pi rad) (-+361° is unlimited)
-                rotorToSet.RotorLock = false;
-                rotorToSet.Enabled = true;
-                float maxAngle = (float)(isHinge ? Math.PI / 2 : Math.PI * 2);
-                float currentAngle = rotorToSet.Angle;
-                float targetAngle = angularTarget;
-                //Rotors are bad at rotating efficiently below -maxAngle, e.g. -350 -> -370 = -10 = 350 is a 350° movement
-                //-Angle + maxAngle = +Angle
-                if(!isHinge) {
-                    targetAngle = currentAngle + angularTarget;
-                    if(targetAngle > maxAngle) targetAngle -= 2 * maxAngle;
-                    else if(targetAngle < -maxAngle) targetAngle += maxAngle;
+            public bool HasFulfilledRoutine(RotationHelper rhInstance) {
+                bool returnValue = false;
+                switch(Status) {
+                    case SIStatus.AligningToNormal:
+                        if(rhInstance.IsAlignedWithNormalizedTargetVector(_targetPlaneNormal, rotorTop.LocalRotationAxis, Rotor.ALIGNMENT_PRECISION_THRESHOLD)) {
+                            rotorBase.Lock();
+                            hingeBase.Lock();
+                            Status = SIStatus.Idle;
+                        }
+                        break;
                 }
-                //Order in which they're applied is relevant, as UpperLimit >= LowerLimit
-                rotorToSet.UpperLimitRad = targetAngle;
-                rotorToSet.LowerLimitRad = targetAngle;
-                rotorToSet.UpperLimitRad = targetAngle;
-                if(!float.IsNaN(targetAngle)) rotorToSet.TargetVelocityRPM = Math.Sign(targetAngle + maxAngle - (currentAngle + maxAngle));
-                if(isHinge) {
-                    //Hinges ignore their physical limits when trying to get back within bounds (e.g. 80° -> -80° will result in the hinge getting stuck at ~113°).
-                    //Leave a buffer behind our target angle, so that it doesn't affect our actual targetAngle
-                    if(targetAngle < currentAngle) rotorToSet.UpperLimitRad = targetAngle + 0.00001f;
-                    else if(targetAngle > currentAngle) rotorToSet.LowerLimitRad = targetAngle - 0.00001f;
-                }
-                //Echo($"UpperLimit: {rotorToSet.UpperLimitRad}\nLowerLimit: {rotorToSet.LowerLimitRad}");
-                //Echo($"angTarget: {angularTarget}");
-                //Echo($"isHinge: {isHinge}");
-                //Echo($"currentAngle: {rotorToSet.Angle}\ntargetAngle: {targetAngle}");
-                //Echo($"RPM: {rotorToSet.TargetVelocityRPM}\n");
-            }
-            public void HasSetup() {
-                bool rotorBaseInPlace = Math.Round(rotorBase.Angle) == rotorBase.LowerLimitDeg;
-                bool hingeBaseInPlace = hingeBase.Angle == hingeBase.LowerLimitRad || hingeBase.Angle == hingeBase.UpperLimitRad;
-                rotorBase.RotorLock = rotorBaseInPlace;
-                hingeBase.RotorLock = hingeBaseInPlace;
-                if(rotorBaseInPlace && hingeBaseInPlace) Status = SIStatus.AligningToSun;
+                return returnValue;
             }
         }
+        #region Constructor, Save & Main
         public Program() {
             Func<int, string[], string> invalidParameterMessage = (argIndex, validParams) =>
             $"Invalid parameter {inQuotes(_commandLine.Argument(argIndex))}. Valid parameters are:\n{string.Join(", ", validParams)}";
-
-            Me.CustomName = $"PB.{NAME_PROGRAMMABLE_BLOCK}";
-            lcd = Me.GetSurface(0);
-            lcd.ReadText(logger);
-            lcd.ContentType = ContentType.TEXT_AND_IMAGE;
-
-            InitializeBlocks();
-            dicRoutines = new Dictionary<Routines, Action>() {
-                {Routines.None, () => { } },
-                {Routines.Hibernate, () => { } },
-                {Routines.ManageSolarInstallations, () => { } },
+            #region Dictionary Routines
+            dicRoutines = new Dictionary<Routine, Action>() {
+                {Routine.None, () => { } },
+                {Routine.Hibernate, () => { } },
+                {Routine.ManageSolarInstallations, () => { } },
             };
+            #endregion
+            #region Dictionary commands
             dicCommands = new Dictionary<string, Action>(StringComparer.OrdinalIgnoreCase) {
-                {"Run", () => { if(aligningSolarInstallations.Count > 0)ChangeCurrentRoutine(Routines.AlignToSun, UpdateFrequency.Update100); } },
-                {"Halt", () => ChangeCurrentRoutine(Routines.None, UpdateFrequency.None) },
-                {"Reinitialize", () => InitializeBlocks() },
+                {"Run", () => { ChangeCurrentRoutine(Routine.ManageSolarInstallations); } },
+                {"Halt", () => ChangeCurrentRoutine(Routine.None) },
+                {"Reinitialize", () => InitializeBlocks(false) },
                 {"Toggle", () => {
                     string targetInstallationID = _commandLine.Argument(1);
                     SolarInstallation targetInstallation = solarInstallationList.Find(si => si.id == targetInstallationID);
@@ -233,7 +521,7 @@ namespace IngameScript {
                     ToggleAlignmentStatus(targetInstallation); } },
                 {"ShowRegistered", () => {
                     StringBuilder message = new StringBuilder($"Currently performing routine {currentRoutine}.");
-                    if (currentRoutine == Routines.AlignToSun){
+                    if (currentRoutine == Routine.AlignToSun){
                         message.Remove(message.Length-1, 1);
                         message.AppendLine(" on:");
                         foreach (var installation in aligningSolarInstallations) message.AppendLine(installation.id);
@@ -242,21 +530,32 @@ namespace IngameScript {
                 } },
                 {"ClearLog", () => {lcd.WriteText(""); logger.Clear(); } },
             };
+            #endregion
+
+            Me.CustomName = $"PB.{NAME_PROGRAMMABLE_BLOCK}";
+            lcd = Me.GetSurface(0);
+            lcd.ReadText(logger);
+            lcd.ContentType = ContentType.TEXT_AND_IMAGE;
+
+            InitializeBlocks(true);
+            sunOrbit = new SunOrbit(IGC, false);
+            sunOrbit.ReadFromIni(_ini);
+            ChangeCurrentRoutine(currentRoutine);
         }
         public void Save() {
+            _ini.Clear();
+            sunOrbit.WriteToIni(_ini);
         }
         public void Main(string argument, UpdateType updateSource) {
             Echo(Runtime.LastRunTimeMs.ToString());
-            //TODO: Manage arguments so that "Run" can become "", being the default when run is initiated via non-automating updating
-            if((updateSource & AUTOMATIC_UPDATE_TYPE) == 0) {
+            Echo(Runtime.UpdateFrequency.ToString());
+            Echo(currentRoutine.ToString() + "\n");
+            currentUpdateSource = updateSource;
+            if((updateSource & (UpdateType.Trigger | UpdateType.Terminal)) != 0) {
                 if(_commandLine.TryParse(argument)) {
                     Action currentCommand;
                     if(dicCommands.TryGetValue(_commandLine.Argument(0), out currentCommand)) {
-                        string cmdLine = _commandLine.Argument(0);
-                        for(int i = 1; i < _commandLine.ArgumentCount; i++) {
-                            cmdLine += $" {_commandLine.Argument(i)}";
-                        }
-                        Log($"Executing command line: {cmdLine}");
+                        Log($"Executing command line: {string.Join(" ", _commandLine.Items)}");
                         currentCommand();
                     }
                     else {
@@ -265,32 +564,31 @@ namespace IngameScript {
                         Log(printable.ToString());
                     }
                 }
+                else dicCommands["Run"]();
             }
+            else if((updateSource & UpdateType.IGC) != 0) sunOrbit.IGC_ProcessMessages();
             else dicRoutines[currentRoutine]();
         }
-        public void ChangeCurrentRoutine(Routines targetRoutine, UpdateFrequency updateFrequency) {
+        #endregion
+        public void ChangeCurrentRoutine(Routine targetRoutine) {
+            UpdateFrequency updateFrequency = UpdateFrequency.Update100;
+            switch(targetRoutine) {
+                case Routine.None:
+                    updateFrequency = UpdateFrequency.None;
+                    break;
+            }
             currentRoutine = targetRoutine;
             Runtime.UpdateFrequency = updateFrequency;
         }
         public void ManageActiveInstallations() {
             //TODO:Give feedback if there's no sunOrbit data
-            if(!HasSunOrbitData()) return;
+            if(!sunOrbit.IsMapped()) { 
+                Runtime.UpdateFrequency = UpdateFrequency.None;
+                return;
+            }
             //TODO: Complete the code here, maybe revise on how solar installations are handled once aligned. Automatic checkup every couple of min? HasAligned --> removal from activeSolarInstallations Set?
-            foreach(var si in activeInstallationsSet) {
-                switch(si.Status) {
-                    case SIStatus.Idle:
-                        si.Setup(sunPlaneNormal);
-                        continue;
-                    case SIStatus.SettingUp:
-                        si.Setup(sunPlaneNormal);
-                        continue;
-                    case SIStatus.AligningToSun:
-                        si.Setup(sunPlaneNormal);
-                        continue;
-                    case SIStatus.HasAligned:
-                        si.Setup(sunPlaneNormal);
-                        continue;
-                }
+            foreach(var si in maintainedInstallationsSet) {
+
             }
         }
         public void Hibernate() {
@@ -301,39 +599,7 @@ namespace IngameScript {
             }
             hibernationTick++;
         }
-        public bool HasSunOrbitData() {
-            bool returnBool = false;
-            //TODO: Code here. Check Program's fields, then check Storage/Custom Data if not yet assigned
-        }
-        public void GenerateGPSCoords() {
-            //TODO: Optimize by providing feedback, giving a viable lcd to print to and give options between 4, 8 or 16 points to print
-            string colorHex = "#ff8c00";
-
-            Vector3D gridaxis1 = Vector3D.CalculatePerpendicularVector(sunPlaneNormal);
-            Vector3D gridaxis3 = Vector3D.Normalize(gridaxis1.Cross(sunPlaneNormal));
-            Vector3D gridaxis2 = Vector3D.Normalize(gridaxis1 + gridaxis3);
-            Vector3D gridaxis4 = Vector3D.Normalize(gridaxis2.Cross(sunPlaneNormal));
-
-            Vector3D[] gpsConvertables = {
-                gridaxis1,
-                gridaxis2,
-                gridaxis3,
-                gridaxis4,
-                -gridaxis1,
-                -gridaxis2,
-                -gridaxis3,
-                -gridaxis4,
-            };
-            //Func<> doesn't work when coordinates are super tiny
-            Func<Vector3D, string, string> toGPSString = (vec, coordName) => $"GPS:{coordName}:{vec.X}:{vec.Y}:{vec.Z}:{colorHex}:";
-            string printable = "";
-            for(int i = 0; i < gpsConvertables.Length; i++) {
-                printable += toGPSString(Vector3D.Normalize(gpsConvertables[i]) * Math.Pow(10, 12), $"gridPointOnSunOrbit{i + 1}") + "\n";
-            }
-            var lcd = (IMyTextPanel)GridTerminalSystem.GetBlockWithName("LCD Panel");
-            lcd.WriteText(printable);
-        }
-        public void InitializeBlocks() {
+        public void InitializeBlocks(bool calledInConstructor) {
             //TODO: Completely revamp this, checking if hinge and rotorTop are exactly on top of the connected rotorparts (via grid coords maybe?)
             StringBuilder logMessage = new StringBuilder($"Finished initialization. Registered {NAME_SOLAR_INSTALLATION}s:\n");
             Func<IMyTerminalBlock, bool> basePredicate = block => block.IsSameConstructAs(Me) && block.IsFunctional;
@@ -344,9 +610,10 @@ namespace IngameScript {
                 block.ShowInToolbarConfig = !HIDE_SOLAR_INSTALLATION_BLOCKS_IN_TERMINAL;
             };
 
-            activeInstallationsSet.Clear();
+            maintainedInstallationsSet.Clear();
             var rotors = new List<IMyMotorStator>();
             GridTerminalSystem.GetBlocksOfType(rotors, block => MyIni.HasSection(block.CustomData, NAME_SOLAR_INSTALLATION) && basePredicate(block));
+            //TODO: Use VectorI3 coordinates to determine whether things are in place, return feedback
             foreach(IMyMotorStator rotorBase in rotors) {
                 MyIniParseResult parseResult;
                 if(_ini.TryParse(rotorBase.CustomData, out parseResult)) {
@@ -354,7 +621,6 @@ namespace IngameScript {
                     IMyMotorStator hingeBase = null;
                     IMyMotorStator rotorTop = null;
                     IMySolarPanel referencePanel = null;
-                    IMyShipController massSensor = null;
                     var allPanels = new List<IMySolarPanel>();
                     if(id.Length > 0) {
                         var tempList = new List<IMyMotorStator>(1);
@@ -368,7 +634,6 @@ namespace IngameScript {
                         var tempList = new List<IMyShipController>(1);
                         GridTerminalSystem.GetBlocksOfType(allPanels, panel => panel.CubeGrid == hingeBase.TopGrid && basePredicate(panel));
                         GridTerminalSystem.GetBlocksOfType(tempList, block => block.CubeGrid == hingeBase.TopGrid && basePredicate(block));
-                        massSensor = tempList.ElementAtOrDefault(0);
                     }
                     else { Log($"ERROR: Failed to find an owned, functional hinge on grid connected to rotor {inQuotes(rotorBase.CustomName)} in {solarInstallationName(id)}."); continue; }
                     if(allPanels.Count > 0) {
@@ -387,20 +652,23 @@ namespace IngameScript {
                     hingeBase.TopGrid.CustomName = $"{solarInstallationName(id)}.Solar Array";
                     rotorBase.TopGrid.CustomName = $"{solarInstallationName(id)}.RotorBase to HingeBase Connection";
                     float maxReferencePanelOutput = maxPossibleOutputMW(referencePanel.CubeGrid.GridSizeEnum);
-                    if(massSensor is object) {
-                        hideInTerminal(massSensor);
-                        massSensor.CustomName = $"Mass Sensor.{solarInstallationName(id)}";
-                    }
 
-                    SolarInstallation currentInstallation = new SolarInstallation(referencePanel, rotorBase, hingeBase, rotorTop, id, allPanels.Count, massSensor);
+                    SolarInstallation currentInstallation = new SolarInstallation(referencePanel, rotorBase, hingeBase, rotorTop, id, allPanels.Count);
                     solarInstallationList.Add(currentInstallation);
-                    string withOrWithout = massSensor is object ? "with" : "without";
-                    logMessage.AppendLine($"[{currentInstallation.ID}] {withOrWithout} mass sensor and {allPanels.Count} functional panels");
+                    logMessage.AppendLine($"[{currentInstallation.ID}] with {allPanels.Count} functional panels");
                     if(ADD_TO_ALIGNMENT_CYCLE_UPON_SETUP) aligningSolarInstallations.Add(currentInstallation);
                 }
                 else { Log($"ERROR: Failed to parse custom data of rotor {inQuotes(rotorBase.CustomName)} on grid {inQuotes(rotorBase.CubeGrid.CustomName)}.\n{parseResult.Error}"); continue; }
             }
             Log(logMessage.ToString());
+        }
+        public T GetBlock<T>(string blockName = "", List<IMyTerminalBlock> blocks = null) where T : IMyTerminalBlock {
+            var blocksLocal = blocks ?? new List<IMyTerminalBlock>(); ;
+            T myBlock = (T)GridTerminalSystem.GetBlockWithName(blockName);
+            if(!(myBlock is object) && !(blocks is object)) GridTerminalSystem.GetBlocks(blocksLocal);
+            if(!(myBlock is object)) myBlock = (T)blocksLocal.Find(block => block.GetType().Name == typeof(T).Name.Substring(1));
+            if(myBlock is object) return myBlock;
+            else throw new Exception($"An owned block of type {typeof(T).Name} does not exist in the provided block list.");
         }
         public void Log(string message) {
             message = $"[{DateTime.UtcNow}] " + message;
