@@ -276,6 +276,13 @@ namespace IngameScript {
             vec *= Math.Pow(10, 12);
             return $"GPS:{coordName}:{vec.X}:{vec.Y}:{vec.Z}:{colorHex}:\n";
         }
+        void Main() {
+            Vector3D[] vecArray = new Vector3D[2];
+            Vector3D vec = new Vector3D();
+            Echo(vecArray[0].ToString());
+            Echo(vecArray[1].ToString());
+            Echo(vec.ToString());
+        }
         public T GetBlock<T>(string blockName = "", List<IMyTerminalBlock> blocks = null) where T : IMyTerminalBlock {
             var blocksLocal = blocks ?? new List<IMyTerminalBlock>(); ;
             T myBlock = (T)GridTerminalSystem.GetBlockWithName(blockName);

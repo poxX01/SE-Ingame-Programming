@@ -17,6 +17,9 @@ using VRage.Game.ModAPI.Ingame;
 using VRage.Game.ModAPI.Ingame.Utilities;
 using VRage.Game.ObjectBuilders.Definitions;
 using VRageMath;
+using RotationHelper;
+using PrincipleAxis;
+using Rotor;
 
 namespace IngameScript {
     partial class Program : MyGridProgram {
@@ -41,8 +44,9 @@ namespace IngameScript {
          *
          *It is strongly recommended to enable "Share Inertia Tensor" for HingeBase & RotorTop, the program can't do it automatically
          */
-        const string NAME_SOLAR_INSTALLATION = "Solar Installation"; //used as both an identifier as a section in Custom Data and as a Custom Name suffix/prefix
-        const string NAME_PROGRAMMABLE_BLOCK = "Solar Installation Manager";
+        const string NAME_SOLAR_INSTALLATION = "Solar Installation";
+        const string NAME_SOLAR_INSTALLATION_SHORTHAND = "SI";
+        const string NAME_PROGRAMMABLE_BLOCK = "Solar Installations Manager";
         const bool HIDE_SOLAR_INSTALLATION_BLOCKS_IN_TERMINAL = true;
         const bool SETUP_IMMEDIATELY_AFTER_REGISTRATION = true; //if true, upon successfully registering (initializing) a SolarInstallation, it will immediately set up its rotors' angles
         const bool ADD_TO_ALIGNMENT_CYCLE_UPON_SETUP = true; //if true, upon successfully initializing a SolarInstallation, it is immediately added to the alignment cycle
@@ -66,194 +70,16 @@ namespace IngameScript {
         Routine currentRoutine;
         readonly Dictionary<string, SolarInstallation> registeredInstallationsDic = new Dictionary<string, SolarInstallation>();
         readonly HashSet<SolarInstallation> maintainedInstallationsSet = new HashSet<SolarInstallation>();
-        readonly RotationHelper rotationHelper = new RotationHelper();
-        readonly SunOrbit sunOrbit;
+        readonly RotationHelper.RotationHelper rhInstance = new RotationHelper.RotationHelper();
+        readonly SunOrbit soInstance;
 
-        readonly StringBuilder logger = new StringBuilder();
+        readonly StringBuilder logger;
+        readonly StringBuilder messageBuilder = new StringBuilder();
         readonly MyIni _ini = new MyIni();
         readonly MyCommandLine _commandLine = new MyCommandLine();
         readonly Dictionary<Routine, Action> dicRoutines;
         readonly Dictionary<string, Action> dicCommands;
         public enum Routine { None, Hibernate, ManageSolarInstallations }
-        public enum PrincipalAxis { Pitch, Yaw, Roll }
-        public sealed class RotationHelper {
-            //The following two are mostly only useful for gyroscope rotation, as all 3 axes are available to us.
-            //E.g. I want my RC.Forward to align to (0, 1, 0), I require the axes that aren't irrelevant in that rotation (Roll is), and those respective axes' planeNormals for the dot product measure
-            readonly private PrincipalAxis[] _rotationAxes = new PrincipalAxis[2]; //The gyroscope operates via Pitch/Yaw/Roll, so the respective axes are stored for a given rotation task.
-            readonly private Base6Directions.Direction[] _dotProductFactorDirections = new Base6Directions.Direction[2]; //As alignment is done by setting the dot product of 2 axes to 0, the directions for those two axes needs to be stored
-            public PrincipalAxis[] RotationAxes { get { return _rotationAxes; } }
-            public Base6Directions.Direction[] DotProductFactorDirections { get { return _dotProductFactorDirections; } }
-            public Vector3D RotatedVectorClockwise { get; private set; }
-            public Vector3D RotatedVectorCounterClockwise { get; private set; }
-            public void DetermineAlignmentRotationAxesAndDirections(Base6Directions.Direction directionToAlignToAnyFutureTarget) {
-                switch(directionToAlignToAnyFutureTarget) {
-                    case Base6Directions.Direction.Forward:
-                        _rotationAxes[0] = PrincipalAxis.Pitch;
-                        _dotProductFactorDirections[0] = Base6Directions.Direction.Up;
-                        _rotationAxes[1] = PrincipalAxis.Yaw;
-                        _dotProductFactorDirections[1] = Base6Directions.Direction.Right;
-                        break;
-                    case Base6Directions.Direction.Backward:
-                        _rotationAxes[0] = PrincipalAxis.Pitch;
-                        _dotProductFactorDirections[0] = Base6Directions.Direction.Down;
-                        _rotationAxes[1] = PrincipalAxis.Yaw;
-                        _dotProductFactorDirections[1] = Base6Directions.Direction.Left;
-                        break;
-                    case Base6Directions.Direction.Right:
-                        _rotationAxes[0] = PrincipalAxis.Yaw;
-                        _dotProductFactorDirections[0] = Base6Directions.Direction.Backward;
-                        _rotationAxes[1] = PrincipalAxis.Roll;
-                        _dotProductFactorDirections[1] = Base6Directions.Direction.Down;
-                        break;
-                    case Base6Directions.Direction.Left:
-                        _rotationAxes[0] = PrincipalAxis.Yaw;
-                        _dotProductFactorDirections[0] = Base6Directions.Direction.Forward;
-                        _rotationAxes[1] = PrincipalAxis.Roll;
-                        _dotProductFactorDirections[1] = Base6Directions.Direction.Up;
-                        break;
-                    case Base6Directions.Direction.Up:
-                        _rotationAxes[0] = PrincipalAxis.Pitch;
-                        _dotProductFactorDirections[0] = Base6Directions.Direction.Backward;
-                        _rotationAxes[1] = PrincipalAxis.Roll;
-                        _dotProductFactorDirections[1] = Base6Directions.Direction.Right;
-                        break;
-                    case Base6Directions.Direction.Down:
-                        _rotationAxes[0] = PrincipalAxis.Pitch;
-                        _dotProductFactorDirections[0] = Base6Directions.Direction.Forward;
-                        _rotationAxes[1] = PrincipalAxis.Roll;
-                        _dotProductFactorDirections[1] = Base6Directions.Direction.Left;
-                        break;
-                }
-            }
-            public void GenerateRotatedNormalizedVectorsAroundAxisByAngle(Vector3D vectorToRotate, Vector3D rotationAxis, double angle) {
-                vectorToRotate.Normalize();
-                rotationAxis.Normalize();
-                RotatedVectorClockwise = Vector3D.Transform(vectorToRotate, MatrixD.CreateFromQuaternion(QuaternionD.CreateFromAxisAngle(rotationAxis, angle)));
-                RotatedVectorCounterClockwise = Vector3D.Transform(vectorToRotate, MatrixD.CreateFromQuaternion(QuaternionD.CreateFromAxisAngle(rotationAxis, -angle)));
-            }
-            public bool IsAlignedWithNormalizedTargetVector(Vector3D targetVec, Vector3D measureVec, float alignmentSuccessThreshold = 0.0001f) {
-                return Vector3D.Dot(targetVec, measureVec) >= 1 - alignmentSuccessThreshold;
-            }
-            public Vector3D NormalizedVectorProjectedOntoPlane(Vector3D vecToProject, Vector3D planeNormal) {
-                vecToProject.Normalize();
-                planeNormal.Normalize();
-                return Vector3D.Normalize(vecToProject - vecToProject.Dot(planeNormal) * planeNormal);
-            }
-        }
-        public class Rotor {
-            private const float ANGLE_LIMIT = (float)Math.PI * 2;
-            public const float ALIGNMENT_PRECISION_THRESHOLD = 0.0000001f;
-            readonly public IMyMotorStator terminalBlock;
-            protected virtual float AngleLimit { get { return ANGLE_LIMIT; } }
-            public Vector3D LocalRotationAxis { get { return terminalBlock.WorldMatrix.Up; } }
-            public Rotor(IMyMotorStator terminalBlock) {
-                this.terminalBlock = terminalBlock;
-            }
-            protected void Enable() {
-                terminalBlock.Enabled = true;
-                terminalBlock.Torque = 1000;
-            }
-            public void Unlock() {
-                Enable();
-                terminalBlock.RotorLock = false;
-                terminalBlock.TargetVelocityRad = 0;
-                terminalBlock.UpperLimitRad = float.MaxValue;
-                terminalBlock.LowerLimitRad = float.MinValue;
-            }
-            public void Lock() {
-                Enable();
-                terminalBlock.RotorLock = true;
-                terminalBlock.TargetVelocityRad = 0;
-            }
-            public double AlignToVector(RotationHelper rhInstance, Vector3D origin, Vector3D target) {
-                return AlignToVector(rhInstance, origin, target, LocalRotationAxis);
-            }
-            /// <summary>Intended to be called only once on a non-moving rotor. Alignment measurements are imprecise when rotors are moving.</summary>
-            /// <param name="alternateRotationAxis">Used instead of LocalRotationAxis to calculate the angle of rotation.</param>
-            public double AlignToVector(RotationHelper rhInstance, Vector3D origin, Vector3D target, Vector3D alternateRotationAxis) {
-                if(rhInstance.IsAlignedWithNormalizedTargetVector(target, origin, ALIGNMENT_PRECISION_THRESHOLD)) return 0;
-                origin = rhInstance.NormalizedVectorProjectedOntoPlane(origin, alternateRotationAxis);
-                target = rhInstance.NormalizedVectorProjectedOntoPlane(target, alternateRotationAxis);
-                double theta = Math.Acos(origin.Dot(target));
-                theta *= Math.Sign(origin.Cross(alternateRotationAxis).Dot(target));
-                RotateByAngle(theta);
-                return theta;
-            }
-            public virtual void RotateByAngle(double angleDelta) {
-                float targetAngle = terminalBlock.Angle + (float)angleDelta;
-                Unlock();
-                if(targetAngle > AngleLimit) {
-                    terminalBlock.LowerLimitRad = SignSwappedAngle(terminalBlock.Angle);
-                    terminalBlock.UpperLimitRad = ClampedAngleWithinLimit(targetAngle);
-                    terminalBlock.TargetVelocityRPM = 1;
-                }
-                else if(targetAngle < -AngleLimit) {
-                    terminalBlock.UpperLimitRad = SignSwappedAngle(terminalBlock.Angle);
-                    terminalBlock.LowerLimitRad = ClampedAngleWithinLimit(targetAngle);
-                    terminalBlock.TargetVelocityRPM = -1;
-                }
-                else if(targetAngle < terminalBlock.Angle) {
-                    terminalBlock.LowerLimitRad = targetAngle;
-                    terminalBlock.UpperLimitRad = terminalBlock.Angle;
-                    terminalBlock.TargetVelocityRPM = -1;
-                }
-                else {
-                    terminalBlock.UpperLimitRad = targetAngle;
-                    terminalBlock.LowerLimitRad = terminalBlock.Angle;
-                    terminalBlock.TargetVelocityRPM = 1;
-                }
-            }
-            private float ClampedAngleWithinLimit(float angle) {
-                //Only works if 2*-AngleLimit >= angle <= 2*AngleLimit
-                float returnAngle;
-                if(angle < AngleLimit && angle > -AngleLimit) returnAngle = angle;
-                else if(angle < 0) returnAngle = angle + AngleLimit;
-                else returnAngle = angle - AngleLimit;
-                return returnAngle;
-            }
-            protected float SignSwappedAngle(float angle) {
-                float returnAngle;
-                if(angle < 0) returnAngle = AngleLimit + angle;
-                else returnAngle = -AngleLimit + angle;
-                return returnAngle;
-            }
-        }
-        public sealed class Hinge : Rotor {
-            private const float ANGLE_LIMIT = (float)Math.PI / 2;
-            protected override float AngleLimit { get { return ANGLE_LIMIT; } }
-            /// <summary>
-            /// Gets the top part's facing vector, if one is attached. Otherwise returns Vector3D.Zero.
-            /// </summary>
-            public Vector3D HingeFacing {
-                get {
-                    if(terminalBlock.IsAttached) return terminalBlock.Top.WorldMatrix.Left;
-                    else return Vector3D.Zero;
-                }
-            }
-            public Hinge(IMyMotorStator terminalBlock) : base(terminalBlock) { }
-            public new void Unlock() {
-                Enable();
-                terminalBlock.RotorLock = false;
-                terminalBlock.TargetVelocityRad = 0;
-                terminalBlock.UpperLimitRad = AngleLimit;
-                terminalBlock.LowerLimitRad = -AngleLimit;
-            }
-            public override void RotateByAngle(double angleDelta) {
-                float targetAngle = terminalBlock.Angle + (float)angleDelta;
-                Unlock();
-                if(targetAngle > AngleLimit) targetAngle = AngleLimit;
-                else if(targetAngle < -AngleLimit) targetAngle = -AngleLimit;
-                if(targetAngle < terminalBlock.Angle) {
-                    terminalBlock.LowerLimitRad = targetAngle;
-                    terminalBlock.UpperLimitRad = terminalBlock.Angle;
-                }
-                else {
-                    terminalBlock.UpperLimitRad = targetAngle;
-                    terminalBlock.LowerLimitRad = terminalBlock.Angle;
-                }
-                terminalBlock.TargetVelocityRPM = Math.Sign(targetAngle - terminalBlock.Angle);
-            }
-        }
         public sealed class SunOrbit {
             //Contains the minimum 3 data points to describe a sun orbit, sufficient enough to track the sun via a rotor or gyro
             #region Fields and Properties
@@ -263,9 +89,9 @@ namespace IngameScript {
             private const string INI_KEY_PLANE_NORMAL = "Plane normal";
             private const string INI_KEY_ANGULAR_SPEED = "Orbital speed";
             private const string INI_KEY_DIRECTION = "Orbit direction";
-            private const string IGC_BROADCAST_REQUEST_DATA_TAG = "Sun Orbit Broadcast: Request data";
-            private const string IGC_BROADCAST_OVERRIDE_DATA_TAG = "Sun Orbit Broadcast: Override data";
-            private const string IGC_UNICAST_TAG = "Sun Orbit Unicast";
+            public const string IGC_BROADCAST_REQUEST_DATA_TAG = "Sun Orbit Broadcast: Request data";
+            public const string IGC_BROADCAST_OVERRIDE_DATA_TAG = "Sun Orbit Broadcast: Override data";
+            public const string IGC_UNICAST_TAG = "Sun Orbit Unicast";
             private readonly IMyIntergridCommunicationSystem IGC;
             private readonly IMyBroadcastListener broadcastREQUESTDataListener;
             private readonly IMyBroadcastListener broadcastOVERRIDEDataListener;
@@ -347,7 +173,7 @@ namespace IngameScript {
             #region IGC functions
             //Features: Send and override broadcast that, when received by non-analyzers, replaces all their data
             //Upon receiving a data request broadcast, send a unicast message back to the requestor. Narrower query to only request from Analyzers possible
-            private void IGC_OverrideDataFromMessage(MyIGCMessage message) {
+            private void IGC_UpdateOwnDataFromMessage(MyIGCMessage message) {
                 MyTuple<string, int, float> data = (MyTuple<string, int, float>)message.Data;
                 Vector3D outVec;
                 Vector3D.TryParse(data.Item1, out outVec);
@@ -358,7 +184,9 @@ namespace IngameScript {
             private MyTuple<string, int, float> IGC_GenerateMessage() {
                 return new MyTuple<string, int, float>(_planeNormal.ToString(), _rotationDirection, _angularSpeed);
             }
-            public void IGC_ProcessMessages() {
+            /// <returns>Whether its data was attempted to be replaced by that of a received message. TRUE if attempted, FALSE if not.</returns>
+            public bool IGC_ProcessMessages() {
+                bool hasUpdatedData = false;
                 if(IsMapped(DataPoint.PlaneNormal)) {
                     while(broadcastREQUESTDataListener.HasPendingMessage) {
                         MyIGCMessage requestDataMessage = broadcastREQUESTDataListener.AcceptMessage();
@@ -366,11 +194,18 @@ namespace IngameScript {
                             IGC.SendUnicastMessage(requestDataMessage.Source, IGC_UNICAST_TAG, IGC_GenerateMessage());
                     }
                 }
-                if(!isSolarAnalyzer) while(broadcastOVERRIDEDataListener.HasPendingMessage) IGC_OverrideDataFromMessage(broadcastOVERRIDEDataListener.AcceptMessage());
+                if(!isSolarAnalyzer) {
+                    hasUpdatedData = broadcastOVERRIDEDataListener.HasPendingMessage;
+                    while(hasUpdatedData) IGC_UpdateOwnDataFromMessage(broadcastOVERRIDEDataListener.AcceptMessage());
+                }
                 while(IGC.UnicastListener.HasPendingMessage) {
                     MyIGCMessage unicastMessage = IGC.UnicastListener.AcceptMessage();
-                    if(unicastMessage.Tag == IGC_UNICAST_TAG) IGC_OverrideDataFromMessage(unicastMessage);
+                    if(unicastMessage.Tag == IGC_UNICAST_TAG) {
+                        hasUpdatedData = true;
+                        IGC_UpdateOwnDataFromMessage(unicastMessage);
+                    }
                 }
+                return hasUpdatedData;
             }
             public void IGC_BroadcastOverrideData() {
                 if(IsMapped()) IGC.SendBroadcastMessage(IGC_BROADCAST_OVERRIDE_DATA_TAG, IGC_GenerateMessage());
@@ -423,24 +258,29 @@ namespace IngameScript {
         public sealed class SolarInstallation {
             private const float MASS_LARGE_SOLAR_PANEL = 416.8f; //in kg, vanilla is 416.8kg
             private const float MASS_SMALL_SOLAR_PANEL = 143.2f; //in kg, vanilla is 143.2kg
+            private const float MASS_LARGE_OXYGEN_FARM = 3004; //in kg, vanilla is 3004
             private const float MAX_POSSIBLE_OUTPUT_LARGE_SOLAR_PANEL = 0.16f; //in MW, vanilla is 0.16
             private const float MAX_POSSIBLE_OUTPUT_SMALL_SOLAR_PANEL = 0.04f; //in MW, vanilla is 0.04
-            private readonly float _maxPossibleSinglePanelOutput;
-            private readonly Vector3D _targetPlaneNormal;
-            public enum SIStatus { Idle, AligningToNormal, AligningToSun, MatchingSunSpeed, Aligned }
-            public readonly IMySolarPanel referenceSolarPanel;
-            public readonly Rotor rotorBase;
+            private const float MAX_POSSIBLE_OUTPUT_LARGE_OXYGEN_FARM = 0; //TODO
+            private float _maxPossibleSinglePanelOutput;
+            private float _sunExposureCache;
+            private Vector3D _targetPlaneNormal;
+            private int _localRotationDirection;
+
+            private Vector3D[] _rotatedVectorCache;
+            private int _routineCounter;
+            private SIStatus _targetStatus;
+            public enum SIStatus { Idle, AwaitingCondition, AligningToNormal, AligningToSun, MatchingSunRotation, Aligned }
+            public readonly IMySolarPanel referenceSolarPanel; 
+            public readonly Rotor.Rotor rotorBase;
             public readonly Hinge hingeBase;
-            public readonly Rotor rotorTop;
-            public int SolarPanelCount { get; private set; }
+            public readonly Rotor.Rotor rotorTop;
+            public int SolarHarvesterCount { get; private set; }
             public string ID { get; }
             public SIStatus Status { get; private set; }
 
-            //TODO: RotationDirection can be defined by the sun analyzer, relative to the shipped normal vector
-            int rotationDirection;
-
-            public SolarInstallation(IMySolarPanel referenceSolarPanel, IMyMotorStator rotorBase, IMyMotorStator hingeBase, IMyMotorStator rotorTop,
-                string id, int solarPanelCount) {
+            public SolarInstallation(IMySolarPanel referenceSolarPanel, Rotor.Rotor rotorBase, Hinge hingeBase, Rotor.Rotor rotorTop,
+                string id, IMyGridTerminalSystem GTS) {
                 this.referenceSolarPanel = referenceSolarPanel;
                 this.rotorBase = rotorBase;
                 this.hingeBase = hingeBase;
@@ -448,29 +288,46 @@ namespace IngameScript {
                 ID = id;
                 _maxPossibleSinglePanelOutput = referenceSolarPanel.CubeGrid.GridSizeEnum == MyCubeSize.Small ?
                     MAX_POSSIBLE_OUTPUT_SMALL_SOLAR_PANEL : MAX_POSSIBLE_OUTPUT_LARGE_SOLAR_PANEL;
-                UpdatePanelCount(solarPanelCount);
+                UpdatePanelCount(GTS);
             }
-            public void UpdatePanelCount(int solarPanelCount) {
+            public void UpdatePanelCount(IMyGridTerminalSystem GTS) {
                 float torque = 1000;
-                SolarPanelCount = solarPanelCount;
-                if(referenceSolarPanel is object) torque += 
-                        (referenceSolarPanel.CubeGrid.GridSizeEnum == MyCubeSize.Large ? MASS_LARGE_SOLAR_PANEL : MASS_SMALL_SOLAR_PANEL) * solarPanelCount;
+                var harvesterList = new List<IMyTerminalBlock>();
+                GTS.GetBlocksOfType<IMyOxygenFarm>(harvesterList);
+                GTS.GetBlocksOfType<IMySolarPanel>(harvesterList);
+                SolarHarvesterCount = harvesterList.Count;
+                if(referenceSolarPanel is object) torque +=
+                        (referenceSolarPanel.CubeGrid.GridSizeEnum == MyCubeSize.Large ? MASS_LARGE_SOLAR_PANEL : MASS_SMALL_SOLAR_PANEL) * SolarHarvesterCount;
                 rotorTop.terminalBlock.Torque = torque;
+                //TODO: Overhaul this to allow for oxygen farms
             }
             public void ChangeStatus(SIStatus targetStatus) {
-                
+                _routineCounter = 0;
+                switch(targetStatus) {
+                    case SIStatus.AligningToSun:
+                        _sunExposureCache = 0;
+                        Array.Clear(_rotatedVectorCache, 0, _rotatedVectorCache.Length); //TEST: Not sure what Vector3D default is (might be Zero)
+                        break;
+                }
+                Status = targetStatus;
             }
-            public void AlignToSun(SunOrbit soInstance, RotationHelper rhInstance) {
+            public void AlignToSun(SunOrbit soInstance, RotationHelper.RotationHelper rhInstance) {
                 //TODO: Implement 0 sunshine handling and drastical sun exposure changes (e.g. when a ship's shadow blocks the ref panel partially)
                 float currentSunExposure = referenceSolarPanel.MaxOutput / _maxPossibleSinglePanelOutput;
                 if(currentSunExposure != 0) {
-                
+                    if(_rotatedVectorCache[0] == Vector3D.Zero) {
+                        _rotatedVectorCache = rhInstance.GenerateRotatedNormalizedVectorsAroundAxisByAngle(
+                         referenceSolarPanel.WorldMatrix.Forward, _targetPlaneNormal, Math.Acos(currentSunExposure));
+                        _sunExposureCache = currentSunExposure;
+                    }
+                    else {
+                        //TODO: possibly average measurement readouts at the end of 5 tick counter
+                        _routineCounter++;
+                    }
                 }
             }
-            public void AlignToNormal(RotationHelper rhInstance) {
-                Status = SIStatus.AligningToNormal;
-
-                Vector3D hingeBaseForwardOrBackward = hingeBase.terminalBlock.WorldMatrix.Forward.Dot(_targetPlaneNormal) > 
+            public void AlignToNormal(RotationHelper.RotationHelper rhInstance) {
+                Vector3D hingeBaseForwardOrBackward = hingeBase.terminalBlock.WorldMatrix.Forward.Dot(_targetPlaneNormal) >
                     hingeBase.terminalBlock.WorldMatrix.Backward.Dot(_targetPlaneNormal) ?
                     hingeBase.terminalBlock.WorldMatrix.Forward : hingeBase.terminalBlock.WorldMatrix.Backward;
                 double rotorBaseRotationAngle = rotorBase.AlignToVector(rhInstance, hingeBaseForwardOrBackward, _targetPlaneNormal);
@@ -481,11 +338,11 @@ namespace IngameScript {
                 hingeBase.AlignToVector(rhInstance, hingeBase.HingeFacing, rotatedTargetPlaneNormalVector,
                         rhInstance.NormalizedVectorProjectedOntoPlane(hingeBase.LocalRotationAxis, rotorBase.LocalRotationAxis));
             }
-            public bool HasFulfilledRoutine(RotationHelper rhInstance) {
+            public bool HasFulfilledRoutine(RotationHelper.RotationHelper rhInstance) {
                 bool returnValue = false;
                 switch(Status) {
                     case SIStatus.AligningToNormal:
-                        if(rhInstance.IsAlignedWithNormalizedTargetVector(_targetPlaneNormal, rotorTop.LocalRotationAxis, Rotor.ALIGNMENT_PRECISION_THRESHOLD)) {
+                        if(rhInstance.IsAlignedWithNormalizedTargetVector(_targetPlaneNormal, rotorTop.LocalRotationAxis, Rotor.Rotor.ALIGNMENT_PRECISION_THRESHOLD)) {
                             rotorBase.Lock();
                             hingeBase.Lock();
                             Status = SIStatus.Idle;
@@ -494,16 +351,21 @@ namespace IngameScript {
                 }
                 return returnValue;
             }
+            public void UpdateSolarOrbitInfo(SunOrbit sunOrbit) {
+
+            }
         }
         #region Constructor, Save & Main
         public Program() {
             Func<int, string[], string> invalidParameterMessage = (argIndex, validParams) =>
             $"Invalid parameter {inQuotes(_commandLine.Argument(argIndex))}. Valid parameters are:\n{string.Join(", ", validParams)}";
+
+            soInstance = new SunOrbit(IGC, false);
             #region Dictionary Routines
             dicRoutines = new Dictionary<Routine, Action>() {
                 {Routine.None, () => { } },
-                {Routine.Hibernate, () => { } },
-                {Routine.ManageSolarInstallations, () => { } },
+                {Routine.Hibernate, () => { } }, //TODO
+                {Routine.ManageSolarInstallations, () => { } }, //TODO
             };
             #endregion
             #region Dictionary commands
@@ -511,14 +373,17 @@ namespace IngameScript {
                 {"Run", () => { ChangeCurrentRoutine(Routine.ManageSolarInstallations); } },
                 {"Halt", () => ChangeCurrentRoutine(Routine.None) },
                 {"Reinitialize", () => InitializeBlocks(false) },
-                {"Toggle", () => {
+                {"Recommission", () => {
                     string targetInstallationID = _commandLine.Argument(1);
-                    SolarInstallation targetInstallation = solarInstallationList.Find(si => si.id == targetInstallationID);
-                    if (!(targetInstallation is object)) {
+                    if (registeredInstallationsDic.ContainsKey(targetInstallationID)) {
                         Log($"{NAME_SOLAR_INSTALLATION} {inQuotes(targetInstallationID)} is not a registered construct.\nReinitialize or correct for typos.");
                         return;
                     }
-                    ToggleAlignmentStatus(targetInstallation); } },
+                    ToggleAlignmentStatus(targetInstallation);
+                } }, //TODO
+                {"Decommission", () => {
+
+                } }, //TODO
                 {"ShowRegistered", () => {
                     StringBuilder message = new StringBuilder($"Currently performing routine {currentRoutine}.");
                     if (currentRoutine == Routine.AlignToSun){
@@ -531,20 +396,24 @@ namespace IngameScript {
                 {"ClearLog", () => {lcd.WriteText(""); logger.Clear(); } },
             };
             #endregion
+            #region INI reading
+            _ini.TryParse(Storage);
+            logger = new StringBuilder(_ini.Get(INI_SECTION_NAME, INI_KEY_LOGGER_STORAGE).ToString());
+            soInstance.ReadFromIni(_ini);
 
-            Me.CustomName = $"PB.{NAME_PROGRAMMABLE_BLOCK}";
-            lcd = Me.GetSurface(0);
-            lcd.ReadText(logger);
-            lcd.ContentType = ContentType.TEXT_AND_IMAGE;
-
+            #endregion
             InitializeBlocks(true);
-            sunOrbit = new SunOrbit(IGC, false);
-            sunOrbit.ReadFromIni(_ini);
             ChangeCurrentRoutine(currentRoutine);
         }
+        private const string INI_SECTION_NAME = "Solar Installation Manager";
+        private const string INI_KEY_LOGGER_STORAGE = "loggerStorage";
         public void Save() {
             _ini.Clear();
-            sunOrbit.WriteToIni(_ini);
+            _ini.Set(INI_SECTION_NAME, INI_KEY_LOGGER_STORAGE, logger.ToString());
+            soInstance.WriteToIni(_ini);
+
+            lcd.WriteText("");
+            lcd.ContentType = ContentType.NONE;
         }
         public void Main(string argument, UpdateType updateSource) {
             Echo(Runtime.LastRunTimeMs.ToString());
@@ -566,7 +435,10 @@ namespace IngameScript {
                 }
                 else dicCommands["Run"]();
             }
-            else if((updateSource & UpdateType.IGC) != 0) sunOrbit.IGC_ProcessMessages();
+            else if((updateSource & UpdateType.IGC) != 0) {
+                if(soInstance.IGC_ProcessMessages())
+                    foreach(SolarInstallation si in registeredInstallationsDic.Values) si.UpdateSolarOrbitInfo(soInstance);
+            }
             else dicRoutines[currentRoutine]();
         }
         #endregion
@@ -582,7 +454,7 @@ namespace IngameScript {
         }
         public void ManageActiveInstallations() {
             //TODO:Give feedback if there's no sunOrbit data
-            if(!sunOrbit.IsMapped()) { 
+            if(!soInstance.IsMapped()) {
                 Runtime.UpdateFrequency = UpdateFrequency.None;
                 return;
             }
@@ -601,14 +473,24 @@ namespace IngameScript {
         }
         public void InitializeBlocks(bool calledInConstructor) {
             //TODO: Completely revamp this, checking if hinge and rotorTop are exactly on top of the connected rotorparts (via grid coords maybe?)
+            //TODO: Add "potential unregistered solar installation" feature, that gets marked on hud and is then unmarked once setup
+            //      (detects the rotor-hinge-rotor-solar harvester combo)
+            //TODO: Allow for reference panel customization (search for custom data section first, in case one ought be specified, then possibly read custom max values)
             StringBuilder logMessage = new StringBuilder($"Finished initialization. Registered {NAME_SOLAR_INSTALLATION}s:\n");
             Func<IMyTerminalBlock, bool> basePredicate = block => block.IsSameConstructAs(Me) && block.IsFunctional;
             Func<IMyTerminalBlock, Type, bool> isEqualBlockType = (block, type) => block.GetType().Name == type.Name.Substring(1);
-            Func<string, string> solarInstallationName = id => $"{NAME_SOLAR_INSTALLATION}[{id}]";
+            Func<string, string> solarInstallationName = id => $"[{NAME_SOLAR_INSTALLATION_SHORTHAND}.{id}]";
             Action<IMyTerminalBlock> hideInTerminal = block => {
                 block.ShowInTerminal = !HIDE_SOLAR_INSTALLATION_BLOCKS_IN_TERMINAL;
                 block.ShowInToolbarConfig = !HIDE_SOLAR_INSTALLATION_BLOCKS_IN_TERMINAL;
             };
+
+            lcd.WriteText(logger);
+            lcd = Me.GetSurface(0);
+            lcd.ReadText(logger);
+            lcd.ContentType = ContentType.TEXT_AND_IMAGE;
+            Me.CustomName = $"PB.{NAME_PROGRAMMABLE_BLOCK}";
+            //TODO: Add LCD option as a log display
 
             maintainedInstallationsSet.Clear();
             var rotors = new List<IMyMotorStator>();
@@ -629,7 +511,7 @@ namespace IngameScript {
                     }
                     else { Log($"ERROR: Either no ID key or value in custom data of rotor {inQuotes(rotorBase.CustomName)} on grid {inQuotes(rotorBase.CubeGrid.CustomName)}."); continue; }
                     SolarInstallation duplicate = solarInstallationList.Find(si => si.ID == id);
-                    if(duplicate is object) { Log($"ERROR: Rotor {inQuotes(rotorBase.CustomName)} contains a non-unique ID.\nID {inQuotes(id)} already exists in Rotor {inQuotes(duplicate.rotorBase.CustomName)}"); continue; }
+                    if(duplicate is object) { Log($"ERROR: Rotor {inQuotes(rotorBase.CustomName)} contains a non-unique ID.\nID {inQuotes(id)} already exists in Rotor {inQuotes(duplicate.rotorBase.terminalBlock.CustomName)}"); continue; }
                     if(hingeBase is object) {
                         var tempList = new List<IMyShipController>(1);
                         GridTerminalSystem.GetBlocksOfType(allPanels, panel => panel.CubeGrid == hingeBase.TopGrid && basePredicate(panel));
@@ -671,7 +553,8 @@ namespace IngameScript {
             else throw new Exception($"An owned block of type {typeof(T).Name} does not exist in the provided block list.");
         }
         public void Log(string message) {
-            message = $"[{DateTime.UtcNow}] " + message;
+            //TODO: Add auto-text-wrap
+            message = $"[{DateTime.UtcNow}]\n" + message;
             if(!message.EndsWith("\n")) message += "\n";
             logger.Insert(0, message);
             lcd.WriteText(logger.ToString());

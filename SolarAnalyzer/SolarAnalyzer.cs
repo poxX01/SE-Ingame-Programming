@@ -251,9 +251,9 @@ namespace IngameScript {
             private const string INI_KEY_PLANE_NORMAL = "Plane normal";
             private const string INI_KEY_ANGULAR_SPEED = "Orbital speed";
             private const string INI_KEY_DIRECTION = "Orbit direction";
-            private const string IGC_BROADCAST_REQUEST_DATA_TAG = "Sun Orbit Broadcast: Request data";
-            private const string IGC_BROADCAST_OVERRIDE_DATA_TAG = "Sun Orbit Broadcast: Override data";
-            private const string IGC_UNICAST_TAG = "Sun Orbit Unicast";
+            public const string IGC_BROADCAST_REQUEST_DATA_TAG = "Sun Orbit Broadcast: Request data";
+            public const string IGC_BROADCAST_OVERRIDE_DATA_TAG = "Sun Orbit Broadcast: Override data";
+            public const string IGC_UNICAST_TAG = "Sun Orbit Unicast";
             private readonly IMyIntergridCommunicationSystem IGC;
             private readonly IMyBroadcastListener broadcastREQUESTDataListener;
             private readonly IMyBroadcastListener broadcastOVERRIDEDataListener;
@@ -601,10 +601,11 @@ namespace IngameScript {
                 }
                 else {
                     sunOrbit.PlaneNormal = bufferVector.Cross(referenceSolarPanel.WorldMatrix.Forward);
-                    lcd.WriteText($"Success!\nA second exposure value of {mostRecentSunExposure} has been stored.\nProceeding automatically...");
+                    lcd.WriteText($"Success!\nA second exposure value of {mostRecentSunExposure} has been stored.\n" +
+                        $"To continue, run the program again.\nNo more manual input will be required afterwards.");
                     bufferVector = Vector3D.Zero;
                     sunOrbit.IGC_ProcessMessages();
-                    ChangeCurrentRoutine(NextRoutineToMapSunOrbit());
+                    ChangeCurrentRoutine(Routine.None);
                 }
                 return;
             }
