@@ -17,9 +17,9 @@ using VRage.Game.ModAPI.Ingame;
 using VRage.Game.ModAPI.Ingame.Utilities;
 using VRage.Game.ObjectBuilders.Definitions;
 using VRageMath;
-using PrincipleAxis;
+using PXMixins_PrincipleAxis;
 
-namespace RotationHelper {
+namespace PXMixins_RotationHelper {
     public sealed class RotationHelper {
         //The following two are mostly only useful for gyroscope rotation, as all 3 axes are available to us.
         //E.g. I want my RC.Forward to align to (0, 1, 0), I require the axes that aren't irrelevant in that rotation (Roll is), and those respective axes' planeNormals for the dot product measure
@@ -69,12 +69,11 @@ namespace RotationHelper {
                     break;
             }
         }
-        public Vector3D[] GenerateRotatedNormalizedVectorsAroundAxisByAngle(Vector3D vectorToRotate, Vector3D rotationAxis, double angle) {
+        public void GenerateRotatedNormalizedVectorsAroundAxisByAngle(Vector3D vectorToRotate, Vector3D rotationAxis, double angle) {
             vectorToRotate.Normalize();
             rotationAxis.Normalize();
             RotatedVectorClockwise = Vector3D.Transform(vectorToRotate, MatrixD.CreateFromQuaternion(QuaternionD.CreateFromAxisAngle(rotationAxis, angle)));
             RotatedVectorCounterClockwise = Vector3D.Transform(vectorToRotate, MatrixD.CreateFromQuaternion(QuaternionD.CreateFromAxisAngle(rotationAxis, -angle)));
-            return new Vector3D[2] { RotatedVectorClockwise, RotatedVectorCounterClockwise };
         }
         public bool IsAlignedWithNormalizedTargetVector(Vector3D targetVec, Vector3D measureVec, float alignmentSuccessThreshold = 0.0001f) {
             return Vector3D.Dot(targetVec, measureVec) >= 1 - alignmentSuccessThreshold;
@@ -83,6 +82,10 @@ namespace RotationHelper {
             vecToProject.Normalize();
             planeNormal.Normalize();
             return Vector3D.Normalize(vecToProject - vecToProject.Dot(planeNormal) * planeNormal);
+        }
+        public void ClearCache() {
+            RotatedVectorClockwise = Vector3D.Zero;
+            RotatedVectorCounterClockwise = Vector3D.Zero;
         }
     }
 }

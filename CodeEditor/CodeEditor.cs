@@ -276,12 +276,17 @@ namespace IngameScript {
             vec *= Math.Pow(10, 12);
             return $"GPS:{coordName}:{vec.X}:{vec.Y}:{vec.Z}:{colorHex}:\n";
         }
-        void Main() {
-            Vector3D[] vecArray = new Vector3D[2];
-            Vector3D vec = new Vector3D();
-            Echo(vecArray[0].ToString());
-            Echo(vecArray[1].ToString());
-            Echo(vec.ToString());
+        class MyClassTest {
+            Vector3D[] vecArray;
+            public string DoSomething() {
+                return $"{vecArray}\n{vecArray is object}";
+            }
+        }
+        void Main(string argument) {
+            var list = new List<IMySolarPanel>();
+            GridTerminalSystem.GetBlocksOfType(list);
+            var myTestBlock = list.Find(block => MyIni.HasSection(block.CustomData, "test")) ?? list[0];
+            Echo($"{myTestBlock.CustomName}");
         }
         public T GetBlock<T>(string blockName = "", List<IMyTerminalBlock> blocks = null) where T : IMyTerminalBlock {
             var blocksLocal = blocks ?? new List<IMyTerminalBlock>(); ;

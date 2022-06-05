@@ -6,9 +6,10 @@
     <SharedGUID>d0dee239-9007-431a-b46b-67ae739da541</SharedGUID>
   </PropertyGroup>
   <PropertyGroup Label="Configuration">
-    <Import_RootNamespace>Rotation_Helper</Import_RootNamespace>
+    <Import_RootNamespace>PXMixins</Import_RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)Sun Orbit.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Rotor and Hinge.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Rotation Helper.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Principal Axis.cs" />

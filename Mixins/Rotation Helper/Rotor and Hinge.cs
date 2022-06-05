@@ -18,7 +18,7 @@ using VRage.Game.ModAPI.Ingame.Utilities;
 using VRage.Game.ObjectBuilders.Definitions;
 using VRageMath;
 
-namespace Rotor {
+namespace PXMixins_RotorAndHinge {
     public class Rotor {
         private const float ANGLE_LIMIT = (float)Math.PI * 2;
         public const float ALIGNMENT_PRECISION_THRESHOLD = 0.0000001f;
@@ -44,12 +44,12 @@ namespace Rotor {
             terminalBlock.RotorLock = true;
             terminalBlock.TargetVelocityRad = 0;
         }
-        public double AlignToVector(RotationHelper.RotationHelper rhInstance, Vector3D origin, Vector3D target) {
+        public double AlignToVector(PXMixins_RotationHelper.RotationHelper rhInstance, Vector3D origin, Vector3D target) {
             return AlignToVector(rhInstance, origin, target, LocalRotationAxis);
         }
         /// <summary>Intended to be called only once on a non-moving rotor. Alignment measurements are imprecise when rotors are moving.</summary>
         /// <param name="alternateRotationAxis">Used instead of LocalRotationAxis to calculate the angle of rotation.</param>
-        public double AlignToVector(RotationHelper.RotationHelper rhInstance, Vector3D origin, Vector3D target, Vector3D alternateRotationAxis) {
+        public double AlignToVector(PXMixins_RotationHelper.RotationHelper rhInstance, Vector3D origin, Vector3D target, Vector3D alternateRotationAxis) {
             if(rhInstance.IsAlignedWithNormalizedTargetVector(target, origin, ALIGNMENT_PRECISION_THRESHOLD)) return 0;
             origin = rhInstance.NormalizedVectorProjectedOntoPlane(origin, alternateRotationAxis);
             target = rhInstance.NormalizedVectorProjectedOntoPlane(target, alternateRotationAxis);

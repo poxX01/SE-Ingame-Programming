@@ -13,9 +13,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AlignToPosition", "AlignToP
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SolarInstallationManager", "SolarAligner\SolarInstallationManager.csproj", "{FEAC70BF-9133-42DB-A60C-0E5AEB54F8F9}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SolarAnalyzer", "SolarAnalyzer\SolarAnalyzer.csproj", "{C1B74618-07F5-4F37-832C-DBB6B25CC6A8}"
-EndProject
-Project("{D954291E-2A0B-460D-934E-DC6B0785DB48}") = "SEProgrammingMixins", "Mixins\Rotation Helper\SEProgrammingMixins.shproj", "{D0DEE239-9007-431A-B46B-67AE739DA541}"
+Project("{D954291E-2A0B-460D-934E-DC6B0785DB48}") = "PXMixins", "Mixins\Rotation Helper\PXMixins.shproj", "{D0DEE239-9007-431A-B46B-67AE739DA541}"
 EndProject
 Global
 	GlobalSection(SharedMSBuildProjectFiles) = preSolution
@@ -36,8 +34,6 @@ Global
 		{E2E6C92A-5D16-4DD7-A473-44B60F2A290D}.Debug|x64.Build.0 = Debug|x64
 		{FEAC70BF-9133-42DB-A60C-0E5AEB54F8F9}.Debug|x64.ActiveCfg = Debug|x64
 		{FEAC70BF-9133-42DB-A60C-0E5AEB54F8F9}.Debug|x64.Build.0 = Debug|x64
-		{C1B74618-07F5-4F37-832C-DBB6B25CC6A8}.Debug|x64.ActiveCfg = Debug|x64
-		{C1B74618-07F5-4F37-832C-DBB6B25CC6A8}.Debug|x64.Build.0 = Debug|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
