@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 16
 VisualStudioVersion = 16.0.32126.315
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StationInventoryManager", "Space Engineers In-Game Programming\StationInventoryManager.csproj", "{D0017CF7-7BD7-40BC-AFF9-E376A2C3CF8F}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StationInventoryManager", "StationInventoryManager\StationInventoryManager.csproj", "{D0017CF7-7BD7-40BC-AFF9-E376A2C3CF8F}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ShipUtilities", "ShipUtilities\ShipUtilities.csproj", "{E511B97A-BB2B-49DC-BFF7-0AC0CE6EC9A8}"
 EndProject
@@ -11,14 +11,14 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodeEditor", "CodeEditor\Co
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AlignToPosition", "AlignToPosition\AlignToPosition.csproj", "{E2E6C92A-5D16-4DD7-A473-44B60F2A290D}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SolarInstallationManager", "SolarAligner\SolarInstallationManager.csproj", "{FEAC70BF-9133-42DB-A60C-0E5AEB54F8F9}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SolarInstallationManager", "SolarInstallationManager\SolarInstallationManager.csproj", "{FEAC70BF-9133-42DB-A60C-0E5AEB54F8F9}"
 EndProject
-Project("{D954291E-2A0B-460D-934E-DC6B0785DB48}") = "PXMixins", "Mixins\Rotation Helper\PXMixins.shproj", "{D0DEE239-9007-431A-B46B-67AE739DA541}"
+Project("{D954291E-2A0B-460D-934E-DC6B0785DB48}") = "PXMixins", "PXMixins\PXMixins.shproj", "{9F20A15B-066B-4D78-8C4C-5F46936EA710}"
 EndProject
 Global
 	GlobalSection(SharedMSBuildProjectFiles) = preSolution
-		Mixins\Rotation Helper\Rotation Helper.projitems*{d0dee239-9007-431a-b46b-67ae739da541}*SharedItemsImports = 13
-		Mixins\Rotation Helper\Rotation Helper.projitems*{feac70bf-9133-42db-a60c-0e5aeb54f8f9}*SharedItemsImports = 4
+		PXMixins\PXMixins.projitems*{9f20a15b-066b-4d78-8c4c-5f46936ea710}*SharedItemsImports = 13
+		PXMixins\PXMixins.projitems*{feac70bf-9133-42db-a60c-0e5aeb54f8f9}*SharedItemsImports = 4
 	EndGlobalSection
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64

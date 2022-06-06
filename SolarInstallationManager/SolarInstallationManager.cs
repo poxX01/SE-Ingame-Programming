@@ -21,6 +21,7 @@ using PXMixins_RotationHelper;
 using PXMixins_PrincipleAxis;
 using PXMixins_RotorAndHinge;
 using PXMixins_SunOrbit;
+using PXMixins_Logger
 
 namespace IngameScript {
     partial class Program : MyGridProgram {

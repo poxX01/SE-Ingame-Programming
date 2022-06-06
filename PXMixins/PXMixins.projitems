@@ -3,15 +3,15 @@
   <PropertyGroup>
     <MSBuildAllProjects Condition="'$(MSBuildVersion)' == '' Or '$(MSBuildVersion)' &lt; '16.0'">$(MSBuildAllProjects);$(MSBuildThisFileFullPath)</MSBuildAllProjects>
     <HasSharedItems>true</HasSharedItems>
-    <SharedGUID>d0dee239-9007-431a-b46b-67ae739da541</SharedGUID>
+    <SharedGUID>9f20a15b-066b-4d78-8c4c-5f46936ea710</SharedGUID>
   </PropertyGroup>
   <PropertyGroup Label="Configuration">
     <Import_RootNamespace>PXMixins</Import_RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="$(MSBuildThisFileDirectory)Sun Orbit.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)Rotor and Hinge.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)Rotation Helper.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Principal Axis.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Rotation Helper.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Rotor and Hinge.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Sun Orbit.cs" />
   </ItemGroup>
 </Project>
