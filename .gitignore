@@ -364,4 +364,4 @@ FodyWeavers.xsd
 
 # poxX edits
 *_Backup_*.zip
-*/MDK/MDK.paths.props
+*/MDK/mdk.paths.props

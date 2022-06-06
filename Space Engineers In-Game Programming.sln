@@ -15,6 +15,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SolarInstallationManager", 
 EndProject
 Project("{D954291E-2A0B-460D-934E-DC6B0785DB48}") = "PXMixins", "PXMixins\PXMixins.shproj", "{9F20A15B-066B-4D78-8C4C-5F46936EA710}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SolarAnalyzer", "SolarAnalyzer\SolarAnalyzer.csproj", "{C1B74618-07F5-4F37-832C-DBB6B25CC6A8}"
+EndProject
 Global
 	GlobalSection(SharedMSBuildProjectFiles) = preSolution
 		PXMixins\PXMixins.projitems*{9f20a15b-066b-4d78-8c4c-5f46936ea710}*SharedItemsImports = 13
@@ -34,6 +36,8 @@ Global
 		{E2E6C92A-5D16-4DD7-A473-44B60F2A290D}.Debug|x64.Build.0 = Debug|x64
 		{FEAC70BF-9133-42DB-A60C-0E5AEB54F8F9}.Debug|x64.ActiveCfg = Debug|x64
 		{FEAC70BF-9133-42DB-A60C-0E5AEB54F8F9}.Debug|x64.Build.0 = Debug|x64
+		{C1B74618-07F5-4F37-832C-DBB6B25CC6A8}.Debug|x64.ActiveCfg = Debug|x64
+		{C1B74618-07F5-4F37-832C-DBB6B25CC6A8}.Debug|x64.Build.0 = Debug|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
