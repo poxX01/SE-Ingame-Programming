@@ -18,11 +18,15 @@ using VRage.Game.ModAPI.Ingame.Utilities;
 using VRage.Game.ObjectBuilders.Definitions;
 using VRageMath;
 
-namespace PXMixins_RotorAndHinge {
+namespace IngameScript {
     public class Rotor {
         private const float ANGLE_LIMIT = (float)Math.PI * 2;
         public const float ALIGNMENT_PRECISION_THRESHOLD = 0.0000001f;
-        readonly public IMyMotorStator terminalBlock;
+        public readonly IMyMotorStator terminalBlock;
+        private static readonly Vector3I blockPosOnTop = new Vector3I(0, 1, 0);
+        public virtual Vector3I BlockPositionOnTop {
+            get { return blockPosOnTop; }
+        }
         protected virtual float AngleLimit { get { return ANGLE_LIMIT; } }
         public Vector3D LocalRotationAxis { get { return terminalBlock.WorldMatrix.Up; } }
         public Rotor(IMyMotorStator terminalBlock) {
@@ -44,12 +48,12 @@ namespace PXMixins_RotorAndHinge {
             terminalBlock.RotorLock = true;
             terminalBlock.TargetVelocityRad = 0;
         }
-        public double AlignToVector(PXMixins_RotationHelper.RotationHelper rhInstance, Vector3D origin, Vector3D target) {
+        public double AlignToVector(RotationHelper rhInstance, Vector3D origin, Vector3D target) {
             return AlignToVector(rhInstance, origin, target, LocalRotationAxis);
         }
         /// <summary>Intended to be called only once on a non-moving rotor. Alignment measurements are imprecise when rotors are moving.</summary>
         /// <param name="alternateRotationAxis">Used instead of LocalRotationAxis to calculate the angle of rotation.</param>
-        public double AlignToVector(PXMixins_RotationHelper.RotationHelper rhInstance, Vector3D origin, Vector3D target, Vector3D alternateRotationAxis) {
+        public double AlignToVector(RotationHelper rhInstance, Vector3D origin, Vector3D target, Vector3D alternateRotationAxis) {
             if(rhInstance.IsAlignedWithNormalizedTargetVector(target, origin, ALIGNMENT_PRECISION_THRESHOLD)) return 0;
             origin = rhInstance.NormalizedVectorProjectedOntoPlane(origin, alternateRotationAxis);
             target = rhInstance.NormalizedVectorProjectedOntoPlane(target, alternateRotationAxis);
@@ -99,6 +103,10 @@ namespace PXMixins_RotorAndHinge {
     }
     public sealed class Hinge : Rotor {
         private const float ANGLE_LIMIT = (float)Math.PI / 2;
+        private static readonly Vector3I blockPosOnTop = new Vector3I(-1, 0, 0);
+        public override Vector3I BlockPositionOnTop {
+            get { return blockPosOnTop; }
+        }
         protected override float AngleLimit { get { return ANGLE_LIMIT; } }
         /// <summary>
         /// Gets the top part's facing vector, if one is attached. Otherwise returns Vector3D.Zero.

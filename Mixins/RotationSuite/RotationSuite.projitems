@@ -1,0 +1,17 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <MSBuildAllProjects Condition="'$(MSBuildVersion)' == '' Or '$(MSBuildVersion)' &lt; '16.0'">$(MSBuildAllProjects);$(MSBuildThisFileFullPath)</MSBuildAllProjects>
+    <HasSharedItems>true</HasSharedItems>
+    <SharedGUID>a2769c69-f571-4467-8ac6-1e90c3d53975</SharedGUID>
+  </PropertyGroup>
+  <PropertyGroup Label="Configuration">
+    <Import_RootNamespace>RotationSuite</Import_RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)Gyroscope.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Principal Axis.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Rotation Helper.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Rotor and Hinge.cs" />
+  </ItemGroup>
+</Project>

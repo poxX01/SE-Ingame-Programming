@@ -19,7 +19,7 @@ using VRage.Game.ObjectBuilders.Definitions;
 using VRageMath;
 
 
-namespace PXMixins_SunOrbit {
+namespace IngameScript {
     public sealed class SunOrbit {
         //Contains the minimum 3 data points to describe a sun orbit, sufficient enough to track the sun via a rotor or gyro
         #region Fields and Properties

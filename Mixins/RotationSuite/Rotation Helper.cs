@@ -17,9 +17,8 @@ using VRage.Game.ModAPI.Ingame;
 using VRage.Game.ModAPI.Ingame.Utilities;
 using VRage.Game.ObjectBuilders.Definitions;
 using VRageMath;
-using PXMixins_PrincipleAxis;
 
-namespace PXMixins_RotationHelper {
+namespace IngameScript {
     public sealed class RotationHelper {
         //The following two are mostly only useful for gyroscope rotation, as all 3 axes are available to us.
         //E.g. I want my RC.Forward to align to (0, 1, 0), I require the axes that aren't irrelevant in that rotation (Roll is), and those respective axes' planeNormals for the dot product measure

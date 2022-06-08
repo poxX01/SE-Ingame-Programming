@@ -2,6 +2,6 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace PXMixins_PrincipleAxis {
+namespace IngameScript {
     public enum PrincipalAxis { Pitch, Yaw, Roll }
 }

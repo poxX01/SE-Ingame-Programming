@@ -18,7 +18,7 @@ using VRage.Game.ModAPI.Ingame.Utilities;
 using VRage.Game.ObjectBuilders.Definitions;
 using VRageMath;
 
-namespace PXMixins_Logger {
+namespace IngameScript {
     public sealed class Logger {
         private const int MAX_CHARACTER_LIMIT = 100000;
         private const int MAX_LINE_LENGTH = 40;

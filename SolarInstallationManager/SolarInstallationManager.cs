@@ -17,11 +17,6 @@ using VRage.Game.ModAPI.Ingame;
 using VRage.Game.ModAPI.Ingame.Utilities;
 using VRage.Game.ObjectBuilders.Definitions;
 using VRageMath;
-using PXMixins_RotationHelper;
-using PXMixins_PrincipleAxis;
-using PXMixins_RotorAndHinge;
-using PXMixins_SunOrbit;
-using PXMixins_Logger
 
 namespace IngameScript {
     partial class Program : MyGridProgram {
@@ -49,7 +44,6 @@ namespace IngameScript {
         const string NAME_SOLAR_INSTALLATION = "Solar Installation";
         const string NAME_SOLAR_INSTALLATION_SHORTHAND = "SI";
         const string INI_SECTION_NAME = "Solar Installation Manager";
-        const string NAME_PROGRAMMABLE_BLOCK = "Solar Installations Manager";
         const bool HIDE_SOLAR_INSTALLATION_BLOCKS_IN_TERMINAL = true;
         const bool SETUP_IMMEDIATELY_AFTER_REGISTRATION = true; //if true, upon successfully registering (initializing) a SolarInstallation, it will immediately set up its rotors' angles
         const bool ADD_TO_ALIGNMENT_CYCLE_UPON_SETUP = true; //if true, upon successfully initializing a SolarInstallation, it is immediately added to the alignment cycle
@@ -70,7 +64,7 @@ namespace IngameScript {
         UpdateType currentUpdateSource;
         Routine currentRoutine;
         readonly Dictionary<string, SolarInstallation> registeredInstallationsDic = new Dictionary<string, SolarInstallation>();
-        readonly HashSet<SolarInstallation> maintainedInstallationsSet = new HashSet<SolarInstallation>();
+        readonly HashSet<SolarInstallation> activeInstallationsSet = new HashSet<SolarInstallation>();
         readonly RotationHelper rhInstance = new RotationHelper();
         readonly SunOrbit soInstance;
 
@@ -80,88 +74,6 @@ namespace IngameScript {
         readonly Dictionary<Routine, Action> dicRoutines;
         readonly Dictionary<string, Action> dicCommands;
         public enum Routine { None, ManageSolarInstallations }
-        public sealed class Logger {
-            private const int MAX_CHARACTER_LIMIT = 100000;
-            private const int MAX_LINE_LENGTH = 40;
-            private const string INI_SUBSECTION_NAME = "Logger";
-            private readonly string iniFullSectionName;
-            private const string INI_KEY_LOG = "Log";
-            private readonly StringBuilder log = new StringBuilder(100000);
-            public readonly StringBuilder messageBuilder = new StringBuilder();
-            public HashSet<IMyTextSurface> logDisplaySet = new HashSet<IMyTextSurface>();
-            public Logger(IMyProgrammableBlock Me, string iniMainSectionName) {
-                iniFullSectionName = $"{iniMainSectionName}.{INI_SUBSECTION_NAME}";
-                AddDisplay(Me.GetSurface(0));
-                //TODO:
-            }
-            public void PrintMsgBuilder() {
-                string[] splitStrings = messageBuilder.ToString().Split('\n');
-                messageBuilder.Clear();
-                foreach(string str in splitStrings) {
-                    if(str.Length > MAX_LINE_LENGTH) {
-                        string[] strWords = str.Split(' ');
-                        int counter = 0;
-                        foreach(string word in strWords) {
-                            counter += word.Length + 1;
-                            if(counter > MAX_LINE_LENGTH) {
-                                messageBuilder.Replace(' ', '\n', messageBuilder.Length - 1, 1);
-                                counter = word.Length + 1;
-                            }
-                            messageBuilder.Append(word + ' ');
-                        }
-                        messageBuilder.Replace(' ', '\n', messageBuilder.Length - 1, 1);
-                    }
-                    else messageBuilder.AppendLine(str);
-                }
-                messageBuilder.Insert(0, $"[{DateTime.UtcNow}]\n");
-                if(messageBuilder[messageBuilder.Length - 1] != '\n') messageBuilder.AppendLine();
-                log.Insert(0, messageBuilder);
-                if(log.Length > MAX_CHARACTER_LIMIT) log.Remove(MAX_CHARACTER_LIMIT, log.Length - MAX_CHARACTER_LIMIT);
-                foreach(var lcd in logDisplaySet) lcd.WriteText(log);
-                messageBuilder.Clear();
-            }
-            public void PrintString(string message) {
-                messageBuilder.Append(message);
-                PrintMsgBuilder();
-            }
-            public void AddDisplay(IMyTextSurface displayToAdd) {
-                if(logDisplaySet.Add(displayToAdd)) {
-                    displayToAdd.ContentType = ContentType.TEXT_AND_IMAGE;
-                    displayToAdd.Alignment = TextAlignment.LEFT;
-                    displayToAdd.Font = "Debug";
-                    displayToAdd.FontSize = 0.7f;
-                    displayToAdd.BackgroundColor = Color.Black;
-                    displayToAdd.FontColor = Color.White;
-                    displayToAdd.TextPadding = 2;
-                    displayToAdd.ClearImagesFromSelection();
-                }
-            }
-            public void RemoveDisplay(IMyTextSurface displayToRemove) {
-                if(logDisplaySet.Remove(displayToRemove)) {
-                    displayToRemove.ContentType = ContentType.NONE;
-                    displayToRemove.FontSize = 1;
-                    //TODO: use surfaceprovider as IMyTerminalBlock and textpanels instead, then wipe their custom data used to register
-                    //      since custom data is used to mark one display to be shown for custom data
-                }
-            }
-            public void WriteToIni(MyIni ini) {
-                foreach(var display in logDisplaySet) { 
-                    display.WriteText("");
-                    display.ContentType = ContentType.NONE;
-                }
-                ini.Set(iniFullSectionName, INI_KEY_LOG, log.ToString());
-            }
-            public void ReadFromIni(MyIni ini) {
-                if(ini.ContainsSection(iniFullSectionName)) {
-                    log.Clear();
-                    log.Append(ini.Get(iniFullSectionName, INI_KEY_LOG).ToString());
-                }
-            }
-            public void Clear() {
-                log.Clear();
-                foreach(var display in logDisplaySet) display.WriteText(log);
-            }
-        }
         public sealed class SolarInstallation {
             private const float MASS_LARGE_SOLAR_PANEL = 416.8f; //in kg, vanilla is 416.8kg
             private const float MASS_SMALL_SOLAR_PANEL = 143.2f; //in kg, vanilla is 143.2kg
@@ -170,7 +82,9 @@ namespace IngameScript {
             private const float MAX_POSSIBLE_OUTPUT_SMALL_SOLAR_PANEL = 0.04f; //in MW, vanilla is 0.04
             private const float MAX_POSSIBLE_OUTPUT_LARGE_OXYGEN_FARM = 1; //Seems to be a percentage, 1 being the max 0.3L/s
 
-            private const string INI_SECTION_NAME = "Solar Installation";
+            private const string INI_SECTION_PREFIX = "Solar Installation";
+            private readonly string fullIniSectionName;
+            private const string INI_KEY_STATUS = "Status";
 
             private float _maxSolPanelOutput;
             private float _maxOxyFarmOutput = 1;
@@ -189,25 +103,33 @@ namespace IngameScript {
             public readonly Rotor rotorTop;
             public int SolarPanelCount { get; private set; }
             public int OxygenFarmCount { get; private set; }
-            public bool IsPlaneNormalAligned { get {
-                    return rhLocal.IsAlignedWithNormalizedTargetVector(_targetOrbitPlaneNormal, hingeBase.HingeFacing);
-                } 
+            private bool IsPlaneNormalAligned {
+                get { return rhLocal.IsAlignedWithNormalizedTargetVector(_targetOrbitPlaneNormal, hingeBase.HingeFacing); }
             }
-            private float MeasuredSunExposure { get {
+            private bool HasSolarHarvester {
+                get { return refSolPanel is object || refOxyFarm is object; }
+            }
+            private bool IsSolarAlignmentCapable {
+                get { return IsPlaneNormalAligned && HasSolarHarvester; }
+            }
+            private float MeasuredSunExposure {
+                get {
                     if(refSolPanel is object) return refSolPanel.MaxOutput / _maxSolPanelOutput;
                     else return refOxyFarm.GetOutput() / MAX_POSSIBLE_OUTPUT_LARGE_OXYGEN_FARM;
                 }
             }
             public string ID { get; }
             public SIStatus Status { get; private set; }
-            public SolarInstallation(RotationHelper rhInstanceLocal, Rotor rotorBase, Hinge hingeBase, Rotor rotorTop,
+            public SolarInstallation(SunOrbit soInstance, Rotor rotorBase, Hinge hingeBase, Rotor rotorTop,
                 string id, IMyGridTerminalSystem GTS) {
                 this.rotorBase = rotorBase;
                 this.hingeBase = hingeBase;
                 this.rotorTop = rotorTop;
-                rhLocal = rhInstanceLocal;
-                ID = id;
+                rhLocal = new RotationHelper();
+                ID = $"SI.{id}";
+                fullIniSectionName = $"{INI_SECTION_PREFIX}.{id}";
                 UpdateHarvesterCounts(GTS);
+                LocalizeSolarOrbitInfo(soInstance);
             }
             public void UpdateHarvesterCounts(IMyGridTerminalSystem GTS) {
                 float torque = 1000;
@@ -217,14 +139,16 @@ namespace IngameScript {
                 GTS.GetBlocksOfType(oxygenFarmList, oxyFarm => oxyFarm.IsFunctional && oxyFarm.CubeGrid == rotorTop.terminalBlock.TopGrid);
                 SolarPanelCount = solarPanelList.Count;
                 OxygenFarmCount = oxygenFarmList.Count;
+                solarPanelList.ForEach(solPanel => solPanel.CustomName = $"[{ID}]Solar Panel");
+                oxygenFarmList.ForEach(oxyFarm => oxyFarm.CustomName = $"[{ID}]Oxygen Farm");
                 if(SolarPanelCount > 0) {
-                    refSolPanel = solarPanelList.Find(panel => MyIni.HasSection(panel.CustomData, INI_SECTION_NAME)) ?? solarPanelList[0];
+                    refSolPanel = solarPanelList.Find(panel => MyIni.HasSection(panel.CustomData, INI_SECTION_PREFIX)) ?? solarPanelList[0];
                     MyCubeSize gridSize = refSolPanel.CubeGrid.GridSizeEnum;
                     _maxSolPanelOutput = gridSize == MyCubeSize.Large ? MAX_POSSIBLE_OUTPUT_LARGE_SOLAR_PANEL : MAX_POSSIBLE_OUTPUT_SMALL_SOLAR_PANEL;
                     torque += SolarPanelCount * (gridSize == MyCubeSize.Large ? MASS_LARGE_SOLAR_PANEL : MASS_SMALL_SOLAR_PANEL);
                 }
                 if(OxygenFarmCount > 0) {
-                    refOxyFarm = oxygenFarmList.Find(oxyFarm => MyIni.HasSection(oxyFarm.CustomData, INI_SECTION_NAME)) ?? oxygenFarmList[0];
+                    refOxyFarm = oxygenFarmList.Find(oxyFarm => MyIni.HasSection(oxyFarm.CustomData, INI_SECTION_PREFIX)) ?? oxygenFarmList[0];
                     torque += OxygenFarmCount * MASS_LARGE_OXYGEN_FARM;
                 }
 
@@ -252,6 +176,7 @@ namespace IngameScript {
                                 rhLocal.NormalizedVectorProjectedOntoPlane(hingeBase.LocalRotationAxis, rotorBase.LocalRotationAxis));
                         break;
                     case SIStatus.AligningToSun:
+                        //TODO: Trust the caller to assert AlignemtnCapability or do it ourselves via log pass?
                         _sunExposureCache = 0;
                         _routineCounter = 0;
                         rhLocal.ClearCache();
@@ -262,6 +187,25 @@ namespace IngameScript {
                         break;
                 }
                 Status = targetStatus;
+            }
+            public void ExecuteStatusRoutine(SunOrbit soInstance, HashSet<SolarInstallation> routineExecutors) {
+                switch(Status) {
+                    case SIStatus.AligningToOrbitPlaneNormal:
+                        if(IsPlaneNormalAligned) {
+                            SIStatus targetStatus = soInstance.IsMapped() && HasSolarHarvester ? SIStatus.AligningToSun : SIStatus.Idle;
+                            ChangeStatus(targetStatus);
+                        }
+                        break;
+                    case SIStatus.AligningToSun:
+                        AlignToSun();
+                        break;
+                    case SIStatus.MatchingSunRotation:
+                        MatchSunRotation(soInstance);
+                        break;
+                    default:
+                        routineExecutors.Remove(this);
+                        break;
+                }
             }
             public void MatchSunRotation(SunOrbit soInstance) {
                 //TEST
@@ -290,17 +234,23 @@ namespace IngameScript {
                 }
             }
             public void LocalizeSolarOrbitInfo(SunOrbit soInstance) {
-
+                if(soInstance.IsMapped(SunOrbit.DataPoint.PlaneNormal))
+                    _targetOrbitPlaneNormal = rotorBase.LocalRotationAxis.Dot(soInstance.PlaneNormal) >= 0 ? soInstance.PlaneNormal : -soInstance.PlaneNormal;
+                if(soInstance.IsMapped(SunOrbit.DataPoint.Direction))
+                    _localRotationDirection = _targetOrbitPlaneNormal == soInstance.PlaneNormal ? soInstance.RotationDirection : -soInstance.RotationDirection;
+            }
+            public void WriteToIni(MyIni ini) {
+                ini.Set(fullIniSectionName, INI_KEY_STATUS, (int)Status);
+            }
+            public void ReadFromIni(MyIni ini) {
+                Status = (SIStatus)ini.Get(fullIniSectionName, INI_KEY_STATUS).ToInt32();
             }
         }
         #region Constructor, Save & Main
         public Program() {
-            Func<int, string[], string> invalidParameterMessage = (argIndex, validParams) =>
-            $"Invalid parameter {inQuotes(_commandLine.Argument(argIndex))}. Valid parameters are:\n{string.Join(", ", validParams)}";
-
             soInstance = new SunOrbit(IGC, false);
             logger = new Logger(Me, INI_SECTION_NAME);
-            
+
             #region Dictionary Routines
             dicRoutines = new Dictionary<Routine, Action>() {
                 {Routine.None, () => { } },
@@ -314,27 +264,32 @@ namespace IngameScript {
                 {"Run", () => { ChangeCurrentRoutine(Routine.ManageSolarInstallations); } },
                 {"Halt", () => ChangeCurrentRoutine(Routine.None) },
                 {"Reinitialize", () => InitializeBlocks(false) },
-                {"Recommission", () => {
-                    string targetInstallationID = _commandLine.Argument(1);
-                    if (!registeredInstallationsDic.ContainsKey(targetInstallationID)) {
-                        Log($"{NAME_SOLAR_INSTALLATION} {inQuotes(targetInstallationID)} is not a registered construct.\nReinitialize or correct for typos.");
-                        return;
+                {"Activate", () => {
+                    int argumentCount = _commandLine.ArgumentCount;
+                    if (argumentCount < 2) { logger.PrintString("No construct(s) specified to activate."); return; }
+                    List<string> targetSIIDList = new List<string>();
+                    if (_commandLine.Argument(1) == "*") { foreach (string id in registeredInstallationsDic.Keys) targetSIIDList.Add(id); }
+                    else { for (int i = 1; i < argumentCount; i++) targetSIIDList.Add(_commandLine.Argument(i)); }
+                    foreach (string targetID in targetSIIDList){
+                        if (registeredInstallationsDic.ContainsKey(targetID)){
+                            SolarInstallation siToActivate = registeredInstallationsDic[targetID];
+                            if (siToActivate.Status == SolarInstallation.SIStatus.Idle  && activeInstallationsSet.Add(siToActivate)){
+                                registeredInstallationsDic[targetID].UpdateHarvesterCounts(GridTerminalSystem);
+                                logger.messageBuilder.AppendLine($"{inQuotes(targetID)} has been activated.");
+                            }
+                            else logger.messageBuilder.AppendLine($"{inQuotes(targetID)} is already active.");
+                        }
+                        else logger.messageBuilder.AppendLine($"{inQuotes(targetID)} is not a registered construct.");
                     }
-                    else {
-                        registeredInstallationsDic[targetInstallationID].UpdateHarvesterCounts(GridTerminalSystem);
-                    }
+                    logger.PrintMsgBuilder();
                 } }, //TODO
                 {"Decommission", () => {
 
                 } }, //TODO
                 {"ShowRegistered", () => {
-                    StringBuilder message = new StringBuilder($"Currently performing routine {currentRoutine}.");
-                    if (currentRoutine == Routine.AlignToSun){
-                        message.Remove(message.Length-1, 1);
-                        message.AppendLine(" on:");
-                        foreach (var installation in aligningSolarInstallations) message.AppendLine(installation.id);
-                    }
-                    Log(message.ToString());
+                    logger.messageBuilder.AppendLine($"Currently performing routine {currentRoutine}.\nRegistered solar installations and their status are:");
+                    foreach(SolarInstallation si in registeredInstallationsDic.Values) logger.messageBuilder.AppendLine($"{si.ID}: {si.Status}");
+                    logger.PrintMsgBuilder();
                 } },
                 {"ClearLog", () => {logger.Clear(); } },
             };
@@ -343,18 +298,20 @@ namespace IngameScript {
             _ini.TryParse(Storage);
             logger.ReadFromIni(_ini);
             soInstance.ReadFromIni(_ini);
-
             #endregion
+
             InitializeBlocks(true);
+            foreach(SolarInstallation si in registeredInstallationsDic.Values) { 
+                si.ReadFromIni(_ini);
+                si.LocalizeSolarOrbitInfo(soInstance); 
+            }
             ChangeCurrentRoutine(currentRoutine);
         }
         public void Save() {
             _ini.Clear();
             logger.WriteToIni(_ini);
             soInstance.WriteToIni(_ini);
-
-            lcd.WriteText("");
-            lcd.ContentType = ContentType.NONE;
+            foreach (SolarInstallation si in registeredInstallationsDic.Values) si.WriteToIni(_ini);
         }
         public void Main(string argument, UpdateType updateSource) {
             Echo(Runtime.LastRunTimeMs.ToString());
@@ -365,7 +322,7 @@ namespace IngameScript {
                 if(_commandLine.TryParse(argument)) {
                     Action currentCommand;
                     if(dicCommands.TryGetValue(_commandLine.Argument(0), out currentCommand)) {
-                        Log($"Executing command line: {string.Join(" ", _commandLine.Items)}");
+                        logger.PrintString($"Executing command line: {string.Join(" ", _commandLine.Items)}");
                         currentCommand();
                     }
                     else {
@@ -399,34 +356,67 @@ namespace IngameScript {
                 Runtime.UpdateFrequency = UpdateFrequency.None;
                 return;
             }
-            //TODO: Complete the code here, maybe revise on how solar installations are handled once aligned. Automatic checkup every couple of min? HasAligned --> removal from activeSolarInstallations Set?
-            foreach(var si in maintainedInstallationsSet) {
-
-            }
+            foreach(SolarInstallation si in activeInstallationsSet) si.ExecuteStatusRoutine(soInstance, activeInstallationsSet);
         }
         public void InitializeBlocks(bool calledInConstructor) {
             //TODO: Completely revamp this, checking if hinge and rotorTop are exactly on top of the connected rotorparts (via grid coords maybe?)
             //TODO: Add "potential unregistered solar installation" feature, that gets marked on hud and is then unmarked once setup
             //      (detects the rotor-hinge-rotor-solar harvester combo)
             //TODO: Allow for reference panel customization (search for custom data section first, in case one ought be specified, then possibly read custom max values)
-            StringBuilder logMessage = new StringBuilder($"Finished initialization. Registered {NAME_SOLAR_INSTALLATION}s:\n");
             Func<IMyTerminalBlock, bool> basePredicate = block => block.IsSameConstructAs(Me) && block.IsFunctional;
             Func<IMyTerminalBlock, Type, bool> isEqualBlockType = (block, type) => block.GetType().Name == type.Name.Substring(1);
-            Func<string, string> solarInstallationName = id => $"[{NAME_SOLAR_INSTALLATION_SHORTHAND}.{id}]";
+            Func<string, string> solarInstallationNamePrefix = id => $"[{NAME_SOLAR_INSTALLATION_SHORTHAND}.{id}]";
             Action<IMyTerminalBlock> hideInTerminal = block => {
                 block.ShowInTerminal = !HIDE_SOLAR_INSTALLATION_BLOCKS_IN_TERMINAL;
                 block.ShowInToolbarConfig = !HIDE_SOLAR_INSTALLATION_BLOCKS_IN_TERMINAL;
+                block.ShowOnHUD = false;
+            };
+            Action<IMyTerminalBlock, string> markAsErroredAndAppendLog = (block, message) => {
+                block.ShowOnHUD = true;
+                block.ShowInTerminal = true;
+                if(!block.CustomName.StartsWith("[ERROR]")) block.CustomName = "[ERROR]" + block.CustomName;
+                logger.messageBuilder.AppendLine(message);
             };
 
-            lcd.ContentType = ContentType.TEXT_AND_IMAGE;
+            logger.messageBuilder.AppendLine("Finished initialization. Registered solar installations:\n");
             Me.CustomName = $"PB.{INI_SECTION_NAME}";
             //TODO: Add LCD option as a log display
 
-            maintainedInstallationsSet.Clear();
-            var rotors = new List<IMyMotorStator>();
-            GridTerminalSystem.GetBlocksOfType(rotors, block => MyIni.HasSection(block.CustomData, NAME_SOLAR_INSTALLATION) && basePredicate(block));
+            var rotorBaseList = new List<IMyMotorStator>();
+            GridTerminalSystem.GetBlocksOfType(rotorBaseList, block => MyIni.HasSection(block.CustomData, NAME_SOLAR_INSTALLATION) && basePredicate(block));
             //TODO: Use VectorI3 coordinates to determine whether things are in place, return feedback
-            foreach(IMyMotorStator rotorBase in rotors) {
+            foreach(IMyMotorStator rotorBase in rotorBaseList) {
+                MyIniParseResult parseResult;
+                if(_ini.TryParse(rotorBase.CustomData, out parseResult)) {
+                    IMyMotorStator hingeBase;
+                    IMyMotorStator rotorTop;
+                    string logMessage;
+                    string id = _ini.Get(NAME_SOLAR_INSTALLATION, "ID").ToString();
+                    if(!(id.Length > 0)) {
+                        logMessage = $"ERROR: No ID key and/or value in custom data of rotor base {inQuotes(rotorBase.CustomName)} on grid {inQuotes(rotorBase.CubeGrid.CustomName)}.";
+                        markAsErroredAndAppendLog(rotorBase, logMessage);
+                        continue;
+                    }
+                    if(registeredInstallationsDic.ContainsKey(id)) {
+                        if(rotorBase.EntityId != registeredInstallationsDic[id].rotorBase.terminalBlock.EntityId) {
+                            logMessage = $"ERROR: Rotor base {inQuotes(rotorBase.CustomName)} contains a non-unique ID.\n" +
+                                $"ID {inQuotes(id)} already exists in rotor base {inQuotes(registeredInstallationsDic[id].rotorBase.terminalBlock.CustomName)}";
+                            markAsErroredAndAppendLog(rotorBase, logMessage);
+                        }
+                        continue;
+                    }
+                    
+                }
+                else {
+                    logger.messageBuilder.AppendLine($"ERROR: Failed to parse custom data of rotor {inQuotes(rotorBase.CustomName)} " +
+                        $"on grid {inQuotes(rotorBase.CubeGrid.CustomName)}:\n{parseResult.Error}");
+                    continue;
+                }
+            }
+            logger.PrintMsgBuilder();
+
+
+            foreach(IMyMotorStator rotorBase in rotorBaseList) {
                 MyIniParseResult parseResult;
                 if(_ini.TryParse(rotorBase.CustomData, out parseResult)) {
                     string id = _ini.Get(NAME_SOLAR_INSTALLATION, "ID").ToString();
@@ -447,25 +437,25 @@ namespace IngameScript {
                         GridTerminalSystem.GetBlocksOfType(allPanels, panel => panel.CubeGrid == hingeBase.TopGrid && basePredicate(panel));
                         GridTerminalSystem.GetBlocksOfType(tempList, block => block.CubeGrid == hingeBase.TopGrid && basePredicate(block));
                     }
-                    else { Log($"ERROR: Failed to find an owned, functional hinge on grid connected to rotor {inQuotes(rotorBase.CustomName)} in {solarInstallationName(id)}."); continue; }
+                    else { Log($"ERROR: Failed to find an owned, functional hinge on grid connected to rotor {inQuotes(rotorBase.CustomName)} in {solarInstallationNamePrefix(id)}."); continue; }
                     if(allPanels.Count > 0) {
                         referencePanel = allPanels.ElementAt(0);
                     }
-                    else { Log($"ERROR: Failed to find owned, functional solar panels on grid connected to hinge {inQuotes(hingeBase.CustomName)} in {solarInstallationName(id)}"); continue; }
+                    else { Log($"ERROR: Failed to find owned, functional solar panels on grid connected to hinge {inQuotes(hingeBase.CustomName)} in {solarInstallationNamePrefix(id)}"); continue; }
                     foreach(IMySolarPanel panel in allPanels) {
                         hideInTerminal(panel);
-                        panel.CustomName = $"Solar Panel.{solarInstallationName(id)}";
+                        panel.CustomName = $"Solar Panel.{solarInstallationNamePrefix(id)}";
                     }
                     hideInTerminal(hingeBase);
                     hideInTerminal(rotorBase);
-                    referencePanel.CustomName = $"Solar Panel.Reference.{solarInstallationName(id)}";
-                    hingeBase.CustomName = $"Hinge.{solarInstallationName(id)}";
-                    rotorBase.CustomName = $"Rotor.{solarInstallationName(id)}";
-                    hingeBase.TopGrid.CustomName = $"{solarInstallationName(id)}.Solar Array";
-                    rotorBase.TopGrid.CustomName = $"{solarInstallationName(id)}.RotorBase to HingeBase Connection";
+                    referencePanel.CustomName = $"Solar Panel.Reference.{solarInstallationNamePrefix(id)}";
+                    hingeBase.CustomName = $"Hinge.{solarInstallationNamePrefix(id)}";
+                    rotorBase.CustomName = $"Rotor.{solarInstallationNamePrefix(id)}";
+                    hingeBase.TopGrid.CustomName = $"{solarInstallationNamePrefix(id)}.Solar Array";
+                    rotorBase.TopGrid.CustomName = $"{solarInstallationNamePrefix(id)}.RotorBase to HingeBase Connection";
                     float maxReferencePanelOutput = maxPossibleOutputMW(referencePanel.CubeGrid.GridSizeEnum);
 
-                    SolarInstallation currentInstallation = new SolarInstallation(new RotationHelper(), rotorBase, hingeBase, rotorTop, id, allPanels.Count);
+                    SolarInstallation currentInstallation = new SolarInstallation(soInstance, rotorBase, hingeBase, rotorTop, id, GridTerminalSystem);
                     solarInstallationList.Add(currentInstallation);
                     logMessage.AppendLine($"[{currentInstallation.ID}] with {allPanels.Count} functional panels");
                     if(ADD_TO_ALIGNMENT_CYCLE_UPON_SETUP) aligningSolarInstallations.Add(currentInstallation);
