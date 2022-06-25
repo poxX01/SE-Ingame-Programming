@@ -29,14 +29,29 @@ namespace IngameScript {
         }
         protected virtual float AngleLimit { get { return ANGLE_LIMIT; } }
         public Vector3D LocalRotationAxis { get { return terminalBlock.WorldMatrix.Up; } }
+        /// <summary>Returns true if the given IMyMotorStator is a rotor.  Returns null if it doesn't have an attached top part.</summary>
+        public static bool? IsMatchingMotorStatorSubtype(IMyMotorStator blockToVerify) {
+            if (blockToVerify.IsAttached)return (blockToVerify.GetPosition() - blockToVerify.Top.GetPosition()).Length() > 0.001;
+            else return null;
+        }
+        /// <summary>Returns the terminal block on top if there is one, otherwise returns null.</summary>
+        public static IMyTerminalBlock GetBlockOnTop(IMyMotorStator motorStator) {
+            IMyTerminalBlock blockOnTop = null;
+            if(motorStator.IsAttached) {
+                var preliminarySlimBlock = motorStator.TopGrid.GetCubeBlock(blockPosOnTop);
+                if(preliminarySlimBlock is object) blockOnTop = preliminarySlimBlock.FatBlock as IMyTerminalBlock;
+            }
+            return blockOnTop;
+        }
         public Rotor(IMyMotorStator terminalBlock) {
             this.terminalBlock = terminalBlock;
         }
+        #region Enable, Lock & Unlock
         protected void Enable() {
             terminalBlock.Enabled = true;
-            terminalBlock.Torque = 1000;
+            terminalBlock.Torque = terminalBlock.Torque > 0 ? terminalBlock.Torque : 1000;
         }
-        public void Unlock() {
+        public virtual void Unlock() {
             Enable();
             terminalBlock.RotorLock = false;
             terminalBlock.TargetVelocityRad = 0;
@@ -48,6 +63,8 @@ namespace IngameScript {
             terminalBlock.RotorLock = true;
             terminalBlock.TargetVelocityRad = 0;
         }
+        #endregion
+        #region Align to vector & rotate by angle
         public double AlignToVector(RotationHelper rhInstance, Vector3D origin, Vector3D target) {
             return AlignToVector(rhInstance, origin, target, LocalRotationAxis);
         }
@@ -86,7 +103,8 @@ namespace IngameScript {
                 terminalBlock.TargetVelocityRPM = 1;
             }
         }
-        private float ClampedAngleWithinLimit(float angle) {
+        #endregion
+        protected virtual float ClampedAngleWithinLimit(float angle) {
             //Only works if 2*-AngleLimit >= angle <= 2*AngleLimit
             float returnAngle;
             if(angle < AngleLimit && angle > -AngleLimit) returnAngle = angle;
@@ -117,8 +135,22 @@ namespace IngameScript {
                 else return Vector3D.Zero;
             }
         }
+        /// <summary>Returns true if the given IMyMotorStator is a hinge. Returns null if it doesn't have an attached top part.</summary>
+        public static new bool? IsMatchingMotorStatorSubtype(IMyMotorStator blockToVerify) {
+            if (blockToVerify.IsAttached) return (blockToVerify.GetPosition() - blockToVerify.Top.GetPosition()).Length() < 0.001;
+            else return null;
+        }
+        /// <summary>Returns the terminal block on top if there is one, otherwise returns null.</summary>
+        public static new IMyTerminalBlock GetBlockOnTop(IMyMotorStator motorStator) {
+            IMyTerminalBlock blockOnTop = null;
+            if(motorStator.IsAttached) {
+                var preliminarySlimBlock = motorStator.TopGrid.GetCubeBlock(blockPosOnTop);
+                if(preliminarySlimBlock is object) blockOnTop = preliminarySlimBlock.FatBlock as IMyTerminalBlock;
+            }
+            return blockOnTop;
+        }
         public Hinge(IMyMotorStator terminalBlock) : base(terminalBlock) { }
-        public new void Unlock() {
+        public override void Unlock() {
             Enable();
             terminalBlock.RotorLock = false;
             terminalBlock.TargetVelocityRad = 0;
@@ -126,10 +158,8 @@ namespace IngameScript {
             terminalBlock.LowerLimitRad = -AngleLimit;
         }
         public override void RotateByAngle(double angleDelta) {
-            float targetAngle = terminalBlock.Angle + (float)angleDelta;
+            float targetAngle = ClampedAngleWithinLimit(terminalBlock.Angle + (float)angleDelta);
             Unlock();
-            if(targetAngle > AngleLimit) targetAngle = AngleLimit;
-            else if(targetAngle < -AngleLimit) targetAngle = -AngleLimit;
             if(targetAngle < terminalBlock.Angle) {
                 terminalBlock.LowerLimitRad = targetAngle;
                 terminalBlock.UpperLimitRad = terminalBlock.Angle;
@@ -139,6 +169,13 @@ namespace IngameScript {
                 terminalBlock.LowerLimitRad = terminalBlock.Angle;
             }
             terminalBlock.TargetVelocityRPM = Math.Sign(targetAngle - terminalBlock.Angle);
+        }
+        protected override float ClampedAngleWithinLimit(float angle) {
+            float returnAngle;
+            if(angle < -AngleLimit) returnAngle = -AngleLimit;
+            else if(angle > AngleLimit) returnAngle = AngleLimit;
+            else returnAngle = angle;
+            return returnAngle;
         }
     }
 }

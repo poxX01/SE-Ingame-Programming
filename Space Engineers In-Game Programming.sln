@@ -13,8 +13,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AlignToPosition", "AlignToP
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SolarInstallationManager", "SolarInstallationManager\SolarInstallationManager.csproj", "{FEAC70BF-9133-42DB-A60C-0E5AEB54F8F9}"
 EndProject
-Project("{D954291E-2A0B-460D-934E-DC6B0785DB48}") = "PXMixins", "PXMixins\PXMixins.shproj", "{9F20A15B-066B-4D78-8C4C-5F46936EA710}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SolarAnalyzer", "SolarAnalyzer\SolarAnalyzer.csproj", "{C1B74618-07F5-4F37-832C-DBB6B25CC6A8}"
 EndProject
 Project("{D954291E-2A0B-460D-934E-DC6B0785DB48}") = "Logger", "Mixins\Logger\Logger.shproj", "{45484179-D11E-46E2-81DF-C1CE07DBEDC6}"
@@ -26,11 +24,15 @@ EndProject
 Global
 	GlobalSection(SharedMSBuildProjectFiles) = preSolution
 		Mixins\Logger\Logger.projitems*{45484179-d11e-46e2-81df-c1ce07dbedc6}*SharedItemsImports = 13
-		PXMixins\PXMixins.projitems*{9f20a15b-066b-4d78-8c4c-5f46936ea710}*SharedItemsImports = 13
 		Mixins\RotationSuite\RotationSuite.projitems*{a2769c69-f571-4467-8ac6-1e90c3d53975}*SharedItemsImports = 13
+		Mixins\Logger\Logger.projitems*{bc307e7e-d2ac-4632-96d3-a8e8e555ff22}*SharedItemsImports = 4
 		Mixins\RotationSuite\RotationSuite.projitems*{bc307e7e-d2ac-4632-96d3-a8e8e555ff22}*SharedItemsImports = 4
+		Mixins\RotationSuite\RotationSuite.projitems*{c1b74618-07f5-4f37-832c-dbb6b25cc6a8}*SharedItemsImports = 4
+		Mixins\SunOrbit\SunOrbit.projitems*{c1b74618-07f5-4f37-832c-dbb6b25cc6a8}*SharedItemsImports = 4
 		Mixins\SunOrbit\SunOrbit.projitems*{dad80187-b94a-4d48-b8a8-41727c89f990}*SharedItemsImports = 13
 		Mixins\Logger\Logger.projitems*{feac70bf-9133-42db-a60c-0e5aeb54f8f9}*SharedItemsImports = 4
+		Mixins\RotationSuite\RotationSuite.projitems*{feac70bf-9133-42db-a60c-0e5aeb54f8f9}*SharedItemsImports = 4
+		Mixins\SunOrbit\SunOrbit.projitems*{feac70bf-9133-42db-a60c-0e5aeb54f8f9}*SharedItemsImports = 4
 	EndGlobalSection
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64

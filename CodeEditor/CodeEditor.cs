@@ -20,15 +20,21 @@ using VRageMath;
 
 namespace IngameScript {
     partial class Program : MyGridProgram {
-        Rotor rotor;
-        Hinge hinge;
+        IMyBroadcastListener broadcastTest;
+        const string LISTENER_NAME = "broadcastTest";
+
+        readonly MyIni ini = new MyIni();
         public Program() {
-            rotor = new Rotor(GetBlock<IMyMotorStator>());
-            hinge = new Hinge((IMyMotorStator)GridTerminalSystem.GetBlockWithId(rotor.terminalBlock.TopGrid.GetCubeBlock(rotor.BlockPositionOnTop).FatBlock.EntityId));
+            broadcastTest = IGC.RegisterBroadcastListener(LISTENER_NAME);
         }
         public void Main(string argument, UpdateType updateSource) {
-            Echo($"{rotor.terminalBlock.Top.WorldMatrix.Up.Dot(rotor.terminalBlock.WorldMatrix.Up)}\n" +
-                $"{hinge.HingeFacing.Dot(hinge.terminalBlock.WorldMatrix.Up)}");
+            if(argument.Length > 0) IGC.SendBroadcastMessage(LISTENER_NAME, "myData", TransmissionDistance.ConnectedConstructs);
+            else Echo($"hasPendingmessage: {broadcastTest.HasPendingMessage}");
+        }
+        public void Save() {
+            ini.Clear();
+
+            Storage = ini.ToString();
         }
         public string ToGPSString(Vector3D vec, string coordName, string colorHex) {
             vec.Normalize();

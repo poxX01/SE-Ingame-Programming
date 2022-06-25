@@ -20,6 +20,10 @@ using VRageMath;
 
 namespace IngameScript {
     partial class Program : MyGridProgram {
+        //TODO: Overhaul maybe implementing logger
+        //TODO: Do a delta comparison during the solar rotation speed measure, so that when a measure vastly different than the current measure is taken, it is discarded rather than stored
+        //      E.g. ships flys past it to block out the sun for a bit
+
         //Leave empty to have the program use the first functional one found on the same construct
         const string NAME_REFERENCE_SOLAR_PANEL = "";
         const string NAME_LCD = "";
@@ -37,7 +41,6 @@ namespace IngameScript {
         const float ALIGN_TO_SUN_OFFSET_THRESHOLD = PRECISION_THRESHOLD - 0.001f; //Any exposure value between 1 and this is considered aligned for that routine.
         const int MEASUREMENTS_TARGET_AMOUNT_SUN_DIRECTION = 8;
         const int MEASUREMENTS_TARGET_AMOUNT_SUN_SPEED = 2500;
-        const UpdateType AUTOMATIC_UPDATE_TYPE = UpdateType.Update100 | UpdateType.Update10 | UpdateType.Update1 | UpdateType.Once;
         float maxPossibleOutput; //in MW
 
         int currentRoutineRepeats;
@@ -46,14 +49,7 @@ namespace IngameScript {
         float mostRecentSunExposure; //1 for perfect exposure, 0 for absolutely no sun on our reference panel
         float exposureDelta;
 
-        //Storage for DetermineSunPlaneNormal()
-        const float SUN_EXPOSURE_PAUSE_THRESHOLD = -0.2f; //if exposure delta ever goes below this value in one run, Pause() is called
-        PrincipalAxis currentRotationAxis = PrincipalAxis.Pitch;
-        bool haveNotInvertedYetThisAxis = true;
-        bool exposureDeltaGreaterThanZeroOnLastRun = false;
-        int[] currentSigns = { 1, 1 };
-
-        Vector3D bufferVector = new Vector3D(); //used in AlignForwardToSun() and DetermineSunPlaneNormals
+        Vector3D bufferVector = Vector3D.Zero; //used in AlignForwardToSun() and DetermineSunPlaneNormals
         readonly List<float> floatList = new List<float>(MEASUREMENTS_TARGET_AMOUNT_SUN_SPEED); //for measurements in ObtainPreliminaryAngularSpeed and DetermineSunOrbitDirection
         readonly List<float> exposureDeltasList = new List<float>(); //TODO: Remove once Routines.Debug gets removed!
 
@@ -65,10 +61,10 @@ namespace IngameScript {
         IMySolarPanel referenceSolarPanel;
         UpdateType currentUpdateSource;
         Routine currentRoutine;
-        Routine routineToResumeOn; //Will resume on this routime after an intermediate routine (e.g. Pause and after AlignmentRoutines)
-        readonly SunOrbit sunOrbit;
+        Routine routineToResumeOn;
+        readonly SunOrbit soInstance;
         readonly List<Gyroscope> registeredGyros = new List<Gyroscope>();
-        readonly RotationHelper rotationHelper = new RotationHelper();
+        readonly RotationHelper rhInstance = new RotationHelper();
         readonly MyIni _ini = new MyIni();
         readonly MyCommandLine _commandLine = new MyCommandLine();
         readonly Dictionary<Routine, Action> dicRoutines;
@@ -77,16 +73,16 @@ namespace IngameScript {
             None,
             Pause,
             DetermineSunPlaneNormal,
-            DetermineSunPlaneNormalManual,
             AlignPanelDownToSunPlaneNormal,
             AlignPanelToSun,
             DetermineSunOrbitDirection,
             DetermineSunAngularSpeed,
             Debug
         }
+        #region Constructor, Save & Main
         public Program() {
             InitializeBlocks();
-            sunOrbit = new SunOrbit(IGC, true);
+            soInstance = new SunOrbit(IGC, true);
             #region ReadFromIni
             _ini.TryParse(Storage);
             currentRoutine = (Routine)_ini.Get(INI_SECTION_NAME, INI_KEY_CURRENT_ROUTINE).ToInt32();
@@ -97,7 +93,7 @@ namespace IngameScript {
                 int storedFloatListCount = _ini.Get(INI_SECTION_NAME, INI_KEY_FLOAT_LIST_COUNT).ToInt32();
                 for(int i = 0; i < storedFloatListCount; i++) floatList.Add(storedFloatListAverage);
             }
-            sunOrbit.ReadFromIni(_ini);
+            soInstance.ReadFromIni(_ini);
             #endregion
             #region Dictionary routines
             dicRoutines = new Dictionary<Routine, Action>() {
@@ -106,20 +102,19 @@ namespace IngameScript {
                     if(currentRoutineRepeats == targetRoutineRepeats) ChangeCurrentRoutine(routineToResumeOn);
                     else currentRoutineRepeats++;
                 } },
-                {Routine.DetermineSunPlaneNormal, () => DetermineSunPlaneNormal()},
-                {Routine.DetermineSunPlaneNormalManual, () => DetermineSunPlaneNormalManual(lcd)},
+                {Routine.DetermineSunPlaneNormal, () => DetermineSunPlaneNormal(lcd)},
                 {Routine.AlignPanelDownToSunPlaneNormal, () => {
-                    if(Gyroscope.AlignToTargetNormalizedVector(sunOrbit.PlaneNormal, referenceSolarPanel.WorldMatrix, rotationHelper, registeredGyros) &&
+                    if(Gyroscope.AlignToTargetNormalizedVector(soInstance.PlaneNormal, referenceSolarPanel.WorldMatrix, rhInstance, registeredGyros) &&
                     (currentUpdateSource & UpdateType.Update100) != 0)
                         ChangeCurrentRoutine(Routine.AlignPanelToSun);
                 }},
                 {Routine.AlignPanelToSun, () => {
-                    Gyroscope.AlignToTargetNormalizedVector(bufferVector, referenceSolarPanel.WorldMatrix, rotationHelper, registeredGyros);
+                    Gyroscope.AlignToTargetNormalizedVector(bufferVector, referenceSolarPanel.WorldMatrix, rhInstance, registeredGyros);
                     if((currentUpdateSource & UpdateType.Update100) != 0) {
                         UpdateExposureValues();
                         if (mostRecentSunExposure > ALIGN_TO_SUN_OFFSET_THRESHOLD) {ChangeCurrentRoutine(routineToResumeOn); return; }
-                        else if (exposureDelta < 0) bufferVector = rotationHelper.RotatedVectorCounterClockwise;
-                        if (rotationHelper.IsAlignedWithNormalizedTargetVector(bufferVector, referenceSolarPanel.WorldMatrix.Forward)) {
+                        else if (exposureDelta < 0) bufferVector = rhInstance.RotatedVectorCounterClockwise;
+                        if (rhInstance.IsAlignedWithNormalizedTargetVector(bufferVector, referenceSolarPanel.WorldMatrix.Forward)) {
                             ChangeCurrentRoutine(Routine.AlignPanelDownToSunPlaneNormal);
                         }
                     }
@@ -131,23 +126,23 @@ namespace IngameScript {
                     if (currentRoutineRepeats > 0) exposureDeltasList.Add(exposureDelta);
                     currentRoutineRepeats++;
                     lcd.WriteText($"mostRecentExposure: {mostRecentSunExposure}\npreviousExposure: {previousSunExposure}\nexposureDelta: {exposureDelta}\n" +
-                        $"preliminaryAngularSpeed: {sunOrbit.AngularSpeedRadPS}\nexposureDeltaAveragesCount: {exposureDeltasList.Count}\n" +
+                        $"preliminaryAngularSpeed: {soInstance.AngularSpeedRadPS}\nexposureDeltaAveragesCount: {exposureDeltasList.Count}\n" +
                         $"exposureDeltaAverage: {(exposureDeltasList.Count > 0 ? exposureDeltasList.Average() : 0)}\n");
                 }},
             };
             #endregion
             #region Dictionary commands
             dicCommands = new Dictionary<string, Action>(StringComparer.OrdinalIgnoreCase) {
-                {"Run", () => {if (!sunOrbit.IsMapped()) ChangeCurrentRoutine(NextRoutineToMapSunOrbit()); } },
+                {"Run", () => {if (!soInstance.IsMapped()) ChangeCurrentRoutine(NextRoutineToMapSunOrbit()); } },
                 {"Halt", () => ChangeCurrentRoutine(Routine.None) },
                 {"Reinitialize", () => InitializeBlocks() },
                 {"ClearData", () => {
                     SunOrbit.DataPoint dataPoint;
                     Enum.TryParse(_commandLine.Argument(1), out dataPoint);
-                    sunOrbit.ClearData(dataPoint);
+                    soInstance.ClearData(dataPoint);
                 } },
-                {"PrintData", () => Me.CustomData = sunOrbit.PrintableDataPoints() },
-                {"SendOverride", () => sunOrbit.IGC_BroadcastOverrideData() },
+                {"PrintData", () => Me.CustomData = soInstance.PrintableDataPoints() },
+                {"SendOverride", () => soInstance.IGC_BroadcastOverrideData() },
                 {"AlignToSun", () => {routineToResumeOn = Routine.None; ChangeCurrentRoutine(Routine.AlignPanelDownToSunPlaneNormal); } },
                 {"Debug", () => {
                     routineToResumeOn = Routine.Debug;
@@ -168,7 +163,7 @@ namespace IngameScript {
                 _ini.Set(INI_SECTION_NAME, INI_KEY_FLOAT_LIST_AVERAGE, floatList.Average());
                 _ini.Set(INI_SECTION_NAME, INI_KEY_FLOAT_LIST_COUNT, floatList.Count);
             }
-            sunOrbit.WriteToIni(_ini);
+            soInstance.WriteToIni(_ini);
             Storage = _ini.ToString();
         }
         public void Main(string argument, UpdateType updateSource) {
@@ -191,9 +186,16 @@ namespace IngameScript {
                 }
                 else dicCommands["Run"]();
             }
-            else if((updateSource & UpdateType.IGC) != 0) sunOrbit.IGC_ProcessMessages();
+            else if((updateSource & UpdateType.IGC) != 0) soInstance.IGC_ProcessMessages();
             else dicRoutines[currentRoutine]();
         }
+        #endregion
+        public void UpdateExposureValues() {
+            previousSunExposure = mostRecentSunExposure;
+            mostRecentSunExposure = referenceSolarPanel.MaxOutput / maxPossibleOutput;
+            exposureDelta = mostRecentSunExposure - previousSunExposure;
+        }
+        #region Routine functions
         public void ChangeCurrentRoutine(Routine targetRoutine) {
             UpdateFrequency updateFrequency = UpdateFrequency.Update100;
             currentRoutineRepeats = 0;
@@ -204,54 +206,46 @@ namespace IngameScript {
                     updateFrequency = UpdateFrequency.None;
                     break;
                 case Routine.Pause:
-                    if(routineToResumeOn == Routine.DetermineSunPlaneNormalManual) targetRoutineRepeats = 3;
-                    break;
-                case Routine.DetermineSunPlaneNormalManual:
-                    for(int i = 0; i < registeredGyros.Count; i++) registeredGyros[i].terminalBlock.GyroOverride = false;
+                    if(routineToResumeOn == Routine.DetermineSunPlaneNormal) targetRoutineRepeats = 3;
                     break;
                 case Routine.DetermineSunPlaneNormal:
-                    updateFrequency = UpdateFrequency.Update10 | UpdateFrequency.Update100;
+                    for(int i = 0; i < registeredGyros.Count; i++) registeredGyros[i].terminalBlock.GyroOverride = false;
                     break;
                 case Routine.AlignPanelDownToSunPlaneNormal:
-                    rotationHelper.DetermineAlignmentRotationAxesAndDirections(Base6Directions.Direction.Down);
+                    rhInstance.DetermineAlignmentRotationAxesAndDirections(Base6Directions.Direction.Down);
                     updateFrequency = UpdateFrequency.Update1 | UpdateFrequency.Update100;
                     break;
                 case Routine.AlignPanelToSun:
                     UpdateExposureValues();
-                    rotationHelper.DetermineAlignmentRotationAxesAndDirections(Base6Directions.Direction.Forward);
-                    rotationHelper.GenerateRotatedNormalizedVectorsAroundAxisByAngle(referenceSolarPanel.WorldMatrix.Forward,
+                    rhInstance.DetermineAlignmentRotationAxesAndDirections(Base6Directions.Direction.Forward);
+                    rhInstance.GenerateRotatedNormalizedVectorsAroundAxisByAngle(referenceSolarPanel.WorldMatrix.Forward,
                         referenceSolarPanel.WorldMatrix.Down, Math.Acos(mostRecentSunExposure));
-                    bufferVector = rotationHelper.RotatedVectorClockwise;
+                    bufferVector = rhInstance.RotatedVectorClockwise;
                     updateFrequency = UpdateFrequency.Update1 | UpdateFrequency.Update100;
                     break;
                 case Routine.DetermineSunOrbitDirection:
-                    rotationHelper.DetermineAlignmentRotationAxesAndDirections(Base6Directions.Direction.Forward);
-                    rotationHelper.GenerateRotatedNormalizedVectorsAroundAxisByAngle(referenceSolarPanel.WorldMatrix.Forward,
+                    rhInstance.DetermineAlignmentRotationAxesAndDirections(Base6Directions.Direction.Forward);
+                    rhInstance.GenerateRotatedNormalizedVectorsAroundAxisByAngle(referenceSolarPanel.WorldMatrix.Forward,
                         referenceSolarPanel.WorldMatrix.Down, 0.4f);
                     updateFrequency = UpdateFrequency.Update1 | UpdateFrequency.Update100;
                     break;
                 case Routine.Debug:
-                    foreach(Gyroscope gyro in registeredGyros) gyro.SetRotation(PrincipalAxis.Yaw, sunOrbit.AngularSpeedRadPS * sunOrbit.RotationDirection);
+                    foreach(Gyroscope gyro in registeredGyros) gyro.SetRotation(PrincipalAxis.Yaw, soInstance.AngularSpeedRadPS * soInstance.RotationDirection);
                     break;
             }
             currentRoutine = targetRoutine;
             Runtime.UpdateFrequency = updateFrequency;
         }
-        public void UpdateExposureValues() {
-            previousSunExposure = mostRecentSunExposure;
-            mostRecentSunExposure = referenceSolarPanel.MaxOutput / maxPossibleOutput;
-            exposureDelta = mostRecentSunExposure - previousSunExposure;
-        }
         public Routine NextRoutineToMapSunOrbit() {
             Routine returnRoutine;
-            if(!sunOrbit.IsMapped(SunOrbit.DataPoint.PlaneNormal)) {
-                returnRoutine = Routine.DetermineSunPlaneNormalManual;
+            if(!soInstance.IsMapped(SunOrbit.DataPoint.PlaneNormal)) {
+                returnRoutine = Routine.DetermineSunPlaneNormal;
             }
-            else if(!sunOrbit.IsMapped(SunOrbit.DataPoint.Direction)) {
+            else if(!soInstance.IsMapped(SunOrbit.DataPoint.Direction)) {
                 returnRoutine = Routine.AlignPanelDownToSunPlaneNormal;
                 routineToResumeOn = Routine.DetermineSunOrbitDirection;
             }
-            else if(!sunOrbit.IsMapped(SunOrbit.DataPoint.AngularSpeed)) {
+            else if(!soInstance.IsMapped(SunOrbit.DataPoint.AngularSpeed)) {
                 returnRoutine = Routine.AlignPanelDownToSunPlaneNormal;
                 routineToResumeOn = Routine.DetermineSunAngularSpeed;
             }
@@ -261,8 +255,9 @@ namespace IngameScript {
             }
             return returnRoutine;
         }
+        #endregion
         #region Sun orbit data point determination functions
-        public void DetermineSunPlaneNormalManual(IMyTextSurface lcd) {
+        public void DetermineSunPlaneNormal(IMyTextSurface lcd) {
             UpdateExposureValues();
             if(lcdText.Length > lcdTextDefaultLength) lcdText.Remove(lcdTextDefaultLength + 1, lcdText.Length - lcdTextDefaultLength - 1);
             //TEST: Verify whether the rounding is accurate for non-small vanilla panels
@@ -276,66 +271,25 @@ namespace IngameScript {
                     ChangeCurrentRoutine(Routine.Pause);
                 }
                 else {
-                    sunOrbit.PlaneNormal = bufferVector.Cross(referenceSolarPanel.WorldMatrix.Forward);
+                    soInstance.PlaneNormal = bufferVector.Cross(referenceSolarPanel.WorldMatrix.Forward);
                     lcd.WriteText($"Success!\nA second exposure value of {mostRecentSunExposure} has been stored.\n" +
                         $"To continue, run the program again.\nNo more manual input will be required afterwards.");
                     bufferVector = Vector3D.Zero;
-                    sunOrbit.IGC_ProcessMessages();
+                    soInstance.IGC_ProcessMessages();
                     ChangeCurrentRoutine(Routine.None);
                 }
                 return;
             }
             lcd.WriteText(lcdText);
         }
-        public void DetermineSunPlaneNormal() {
-            //Two points are determined where sunExposure >= precision threshold
-            UpdateExposureValues();
-            if(mostRecentSunExposure >= PRECISION_THRESHOLD) {
-                if(bufferVector.IsZero()) {
-                    bufferVector = referenceSolarPanel.WorldMatrix.Forward;
-                    ChangeCurrentRoutine(Routine.Pause);
-                }
-                else {
-                    sunOrbit.PlaneNormal = bufferVector.Cross(referenceSolarPanel.WorldMatrix.Forward);
-                    bufferVector = Vector3D.Zero;
-                    ChangeCurrentRoutine(NextRoutineToMapSunOrbit());
-                }
-                return;
-            }
-            if(exposureDelta < 0) {
-                if(exposureDelta > SUN_EXPOSURE_PAUSE_THRESHOLD) {
-                    if(haveNotInvertedYetThisAxis) {
-                        currentSigns[(int)currentRotationAxis] *= -1;
-                        haveNotInvertedYetThisAxis = false;
-                    }
-                    else {
-                        exposureDeltaGreaterThanZeroOnLastRun = false;
-                        haveNotInvertedYetThisAxis = true;
-                        currentRotationAxis = 1 - currentRotationAxis;
-                        return;
-                    }
-                }
-                else {
-                    ChangeCurrentRoutine(Routine.Pause);
-                    return;
-                }
-            }
-            else if((currentUpdateSource & UpdateType.Update100) != 0 && exposureDelta > 0) {
-                if(exposureDeltaGreaterThanZeroOnLastRun) haveNotInvertedYetThisAxis = false;
-                else exposureDeltaGreaterThanZeroOnLastRun = true;
-            }
-            //TODO: Make this value non-constant and able to adapt to current sunExposure progress
-            float currentAngularMomentum = Math.Max((1 - mostRecentSunExposure) / 2, 0.01f) * currentSigns[(int)currentRotationAxis];
-            for(int i = 0; i < registeredGyros.Count; i++) { registeredGyros[i].SetRotation(currentRotationAxis, currentAngularMomentum); }
-        }
         public void DetermineSunOrbitDirection() {
-            if(Gyroscope.AlignToTargetNormalizedVector(rotationHelper.RotatedVectorClockwise, referenceSolarPanel.WorldMatrix, rotationHelper, registeredGyros)
+            if(Gyroscope.AlignToTargetNormalizedVector(rhInstance.RotatedVectorClockwise, referenceSolarPanel.WorldMatrix, rhInstance, registeredGyros)
                 && (currentUpdateSource & UpdateType.Update100) != 0) {
                 UpdateExposureValues();
                 if(currentRoutineRepeats > 0) floatList.Add(Math.Sign(exposureDelta));
                 currentRoutineRepeats++;
                 if(floatList.Count >= MEASUREMENTS_TARGET_AMOUNT_SUN_DIRECTION) {
-                    sunOrbit.RotationDirection = Math.Sign(floatList.Average());
+                    soInstance.RotationDirection = Math.Sign(floatList.Average());
                     floatList.Clear();
                     ChangeCurrentRoutine(NextRoutineToMapSunOrbit());
                 }
@@ -343,7 +297,7 @@ namespace IngameScript {
         }
         public void DetermineSunAngularSpeed() {
             UpdateExposureValues();
-            if(!rotationHelper.IsAlignedWithNormalizedTargetVector(sunOrbit.PlaneNormal, referenceSolarPanel.WorldMatrix.Down) || mostRecentSunExposure < 0.8f) {
+            if(!rhInstance.IsAlignedWithNormalizedTargetVector(soInstance.PlaneNormal, referenceSolarPanel.WorldMatrix.Down) || mostRecentSunExposure < 0.8f) {
                 routineToResumeOn = currentRoutine;
                 ChangeCurrentRoutine(Routine.AlignPanelDownToSunPlaneNormal);
             }
@@ -352,8 +306,10 @@ namespace IngameScript {
                 currentRoutineRepeats++;
                 //TODO: Increase the amount of data points needed or find a better algorithm that doesn't require as many data points, eventually
                 if(floatList.Count >= MEASUREMENTS_TARGET_AMOUNT_SUN_SPEED) {
-                    sunOrbit.AngularSpeedRadPS = floatList.Average() * sunOrbit.RotationDirection;
+                    soInstance.AngularSpeedRadPS = floatList.Average() * soInstance.RotationDirection;
                     floatList.Clear();
+                    soInstance.IGC_ProcessMessages();
+                    soInstance.IGC_BroadcastOverrideData();
                     ChangeCurrentRoutine(NextRoutineToMapSunOrbit());
                 }
                 lcd.WriteText($"mostRecentExposure: {mostRecentSunExposure}\npreviousExposure: {previousSunExposure}\nexposureDelta: {exposureDelta}\n" +

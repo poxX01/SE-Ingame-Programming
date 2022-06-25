@@ -19,86 +19,149 @@ using VRage.Game.ObjectBuilders.Definitions;
 using VRageMath;
 
 namespace IngameScript {
+    public sealed class LogDisplay {
+        public readonly IMyTerminalBlock owningBlock;
+        public readonly IMyTextSurface surface;
+        public readonly float screenWidth;
+        public LogDisplay(IMyTerminalBlock owningBlock, IMyTextSurface surface) {
+            this.owningBlock = owningBlock;
+            this.surface = surface;
+            screenWidth = surface.SurfaceSize.X - 10;
+        }
+    }
+    //TODO: Store a general, non wrapped log so that when a new display is added whose screenWidth has no log stored yet, we can create a newly wrapped log.
     public sealed class Logger {
         private const int MAX_CHARACTER_LIMIT = 100000;
-        private const int MAX_LINE_LENGTH = 40;
-        private const string INI_SUBSECTION_NAME = "Logger";
+        private const string INI_SECTION_NAME = "Logger";
         private readonly string iniFullSectionName;
-        private const string INI_KEY_LOG = "Log";
-        private readonly StringBuilder log = new StringBuilder(100000);
+        //The float stores the screen's width as defined in the LogDisplay class. Auto wrap varies based on it
+        private readonly Dictionary<float, StringBuilder> formattedLogsDictionary = new Dictionary<float, StringBuilder>();
+        private readonly HashSet<LogDisplay> logDisplaySet = new HashSet<LogDisplay>();
+        private readonly StringBuilder workerSB = new StringBuilder();
+        private readonly StringBuilder mainUnwrappedLog = new StringBuilder();
+        private readonly MyIni _ini = new MyIni();
+
         public readonly StringBuilder messageBuilder = new StringBuilder();
-        public HashSet<IMyTextSurface> logDisplaySet = new HashSet<IMyTextSurface>();
-        public Logger(IMyProgrammableBlock Me, string iniMainSectionName) {
-            iniFullSectionName = $"{iniMainSectionName}.{INI_SUBSECTION_NAME}";
-            AddDisplay(Me.GetSurface(0));
-            //TODO:
+        public Logger(IMyProgrammableBlock Me, string iniMainSectionName, IMyGridTerminalSystem GTS) {
+            iniFullSectionName = $"{iniMainSectionName}.{INI_SECTION_NAME}";
+            AddDisplay(new LogDisplay(Me, Me.GetSurface(0)));
+            ScanGTSForLogDisplays(GTS);
+        }
+        public void ScanGTSForLogDisplays(IMyGridTerminalSystem GTS) {
+            var candidateList = new List<IMyTerminalBlock>();
+            GTS.GetBlocksOfType(candidateList, block => MyIni.HasSection(block.CustomData, iniFullSectionName));
+            foreach(var block in candidateList) {
+                IMyTextPanel textPanel = block as IMyTextPanel;
+                IMyTextSurfaceProvider surfaceProvider = block as IMyTextSurfaceProvider;
+                if(textPanel is object) AddDisplay(new LogDisplay(block, textPanel));
+                else if(surfaceProvider is object) {
+                    _ini.Clear();
+                    int targetScreen = -1;
+                    if (_ini.TryParse(block.CustomData)) targetScreen = _ini.Get(iniFullSectionName, "surface").ToInt32();
+                    if(targetScreen <= surfaceProvider.SurfaceCount && targetScreen >= 0) AddDisplay(new LogDisplay(block, surfaceProvider.GetSurface(targetScreen)));
+                }
+            }
+        }
+        #region PrintLog functions
+        public void WriteLogsToAllDisplays() {
+            foreach(LogDisplay display in logDisplaySet) display.surface.WriteText(formattedLogsDictionary[display.screenWidth]);
+        }
+        public void WrapText(StringBuilder sbToAppendWrappedTextOnto, string[] inputLines, IMyTextSurface tsInstance, float screenWidth, string font = "Debug", float fontSize = 0.7f) {
+            foreach(string str in inputLines) {
+                workerSB.Append(str);
+                if(tsInstance.MeasureStringInPixels(workerSB, font, fontSize).X > screenWidth) {
+                    workerSB.Clear();
+                    string[] strWords = str.Split(' ');
+                    foreach(string word in strWords) {
+                        workerSB.Append(word + ' ');
+                        if(tsInstance.MeasureStringInPixels(workerSB, font, fontSize).X > screenWidth) {
+                            workerSB.Length = workerSB.Length - (word.Length + 2);
+                            sbToAppendWrappedTextOnto.AppendLine(workerSB.ToString());
+                            workerSB.Clear();
+                            workerSB.Append(word + ' ');
+                        }
+                    }
+                    sbToAppendWrappedTextOnto.Append(workerSB);
+                    sbToAppendWrappedTextOnto.Replace(' ', '\n', sbToAppendWrappedTextOnto.Length - 1, 1);
+                }
+                else sbToAppendWrappedTextOnto.AppendLine(str);
+                workerSB.Clear();
+            }
         }
         public void PrintMsgBuilder() {
+            //TODO: Logger sometimes just collapses on itsself (maybe this is when the length gets cut?)
+            if(messageBuilder.Length == 0) return;
+            IMyTextSurface textSurfaceInstance = logDisplaySet.First().surface;
             string[] splitStrings = messageBuilder.ToString().Split('\n');
             messageBuilder.Clear();
-            foreach(string str in splitStrings) {
-                if(str.Length > MAX_LINE_LENGTH) {
-                    string[] strWords = str.Split(' ');
-                    int counter = 0;
-                    foreach(string word in strWords) {
-                        counter += word.Length + 1;
-                        if(counter > MAX_LINE_LENGTH) {
-                            messageBuilder.Replace(' ', '\n', messageBuilder.Length - 1, 1);
-                            counter = word.Length + 1;
-                        }
-                        messageBuilder.Append(word + ' ');
-                    }
-                    messageBuilder.Replace(' ', '\n', messageBuilder.Length - 1, 1);
-                }
-                else messageBuilder.AppendLine(str);
+            foreach(var dicEntry in formattedLogsDictionary) {
+                StringBuilder log = dicEntry.Value;
+                WrapText(messageBuilder, splitStrings, textSurfaceInstance, dicEntry.Key);
+                messageBuilder.Insert(0, $"[{DateTime.UtcNow} UTC]\n");
+                if(messageBuilder[messageBuilder.Length - 1] != '\n') messageBuilder.AppendLine();
+                if(log.Length + messageBuilder.Length > MAX_CHARACTER_LIMIT) log.Length = MAX_CHARACTER_LIMIT / 10 * 9;
+                log.Insert(0, messageBuilder);
+                messageBuilder.Clear();
             }
-            messageBuilder.Insert(0, $"[{DateTime.UtcNow}]\n");
-            if(messageBuilder[messageBuilder.Length - 1] != '\n') messageBuilder.AppendLine();
-            log.Insert(0, messageBuilder);
-            if(log.Length > MAX_CHARACTER_LIMIT) log.Remove(MAX_CHARACTER_LIMIT, log.Length - MAX_CHARACTER_LIMIT);
-            foreach(var lcd in logDisplaySet) lcd.WriteText(log);
+            WriteLogsToAllDisplays();
             messageBuilder.Clear();
         }
-        public void PrintString(string message) {
-            messageBuilder.Append(message);
-            PrintMsgBuilder();
+        public void AppendLine(string message) {
+            messageBuilder.AppendLine('>' + message);
         }
-        public void AddDisplay(IMyTextSurface displayToAdd) {
+        #endregion
+        #region Add & remove display functions
+        public void AddDisplay(LogDisplay displayToAdd) {
             if(logDisplaySet.Add(displayToAdd)) {
-                displayToAdd.ContentType = ContentType.TEXT_AND_IMAGE;
-                displayToAdd.Alignment = TextAlignment.LEFT;
-                displayToAdd.Font = "Debug";
-                displayToAdd.FontSize = 0.7f;
-                displayToAdd.BackgroundColor = Color.Black;
-                displayToAdd.FontColor = Color.White;
-                displayToAdd.TextPadding = 2;
-                displayToAdd.ClearImagesFromSelection();
+                displayToAdd.surface.ContentType = ContentType.TEXT_AND_IMAGE;
+                displayToAdd.surface.Alignment = TextAlignment.LEFT;
+                displayToAdd.surface.Font = "Debug";
+                displayToAdd.surface.FontSize = 0.7f;
+                displayToAdd.surface.BackgroundColor = Color.Black;
+                displayToAdd.surface.FontColor = Color.White;
+                displayToAdd.surface.TextPadding = 2;
+                displayToAdd.surface.ClearImagesFromSelection();
+                if(!formattedLogsDictionary.ContainsKey(displayToAdd.screenWidth)) formattedLogsDictionary.Add(displayToAdd.screenWidth, new StringBuilder());
             }
         }
-        public void RemoveDisplay(IMyTextSurface displayToRemove) {
+        public void RemoveDisplay(LogDisplay displayToRemove) {
             if(logDisplaySet.Remove(displayToRemove)) {
-                displayToRemove.ContentType = ContentType.NONE;
-                displayToRemove.FontSize = 1;
-                //TODO: use surfaceprovider as IMyTerminalBlock and textpanels instead, then wipe their custom data used to register
-                //      since custom data is used to mark one display to be shown for custom data
+                displayToRemove.surface.ContentType = ContentType.NONE;
+                displayToRemove.surface.FontSize = 1;
+                _ini.Clear();
+                if(_ini.TryParse(displayToRemove.owningBlock.CustomData)) { 
+                    _ini.DeleteSection(iniFullSectionName);
+                    displayToRemove.owningBlock.CustomData = _ini.ToString();
+                }
+                bool duplicateScreenWidthFound = false;
+                foreach(LogDisplay persistingDisplay in logDisplaySet) {
+                    duplicateScreenWidthFound = persistingDisplay.screenWidth == displayToRemove.screenWidth;
+                    if(duplicateScreenWidthFound) break; 
+                }
+                if(!duplicateScreenWidthFound) formattedLogsDictionary.Remove(displayToRemove.screenWidth);
             }
         }
+        #endregion
+        #region INI write & read
         public void WriteToIni(MyIni ini) {
-            foreach(var display in logDisplaySet) {
-                display.WriteText("");
-                display.ContentType = ContentType.NONE;
-            }
-            ini.Set(iniFullSectionName, INI_KEY_LOG, log.ToString());
+            foreach(var entry in formattedLogsDictionary) ini.Set(INI_SECTION_NAME, entry.Key.ToString(), entry.Value.Replace('\n', '`').ToString());
         }
         public void ReadFromIni(MyIni ini) {
-            if(ini.ContainsSection(iniFullSectionName)) {
-                log.Clear();
-                log.Append(ini.Get(iniFullSectionName, INI_KEY_LOG).ToString());
+            if(ini.ContainsSection(INI_SECTION_NAME)) {
+                var iniKeys = new List<MyIniKey>();
+                ini.GetKeys(INI_SECTION_NAME, iniKeys);
+                formattedLogsDictionary.Clear();
+                foreach(MyIniKey key in iniKeys) {
+                    float screenWidth = float.Parse(key.Name);
+                    StringBuilder sbValue = new StringBuilder(ini.Get(key).ToString());
+                    formattedLogsDictionary.Add(screenWidth, sbValue.Replace('`', '\n'));
+                }
             }
         }
+        #endregion
         public void Clear() {
-            log.Clear();
-            foreach(var display in logDisplaySet) display.WriteText(log);
+            foreach(StringBuilder log in formattedLogsDictionary.Values) log.Clear();
+            foreach(LogDisplay display in logDisplaySet) display.surface.WriteText("");
         }
     }
 }
